@@ -116,6 +116,11 @@ class PID:
         self.kI = kI
         self.kD = kD
     
+    def reset(self):
+        self.integral_error = 0
+        self.previous_value = None
+        
+    
 class TargetPoint:
     def __init__(self, _x, _y, _total_tolerance_or_just_x_tolerance, _tolerance_y = -1):
         self.x = _x
@@ -271,8 +276,8 @@ class Robot(GameObject):
         else:
             # PID loop here, it exists once the wheel distance for each wheel is within _pidDistanceThreshold of the target distance
             x_pos, y_pos = self.get_position_from_encoders()
-            x_direction_PID = PID(0, 0, 1)
-            y_direction_PID = PID(0, 0, 1)
+            x_direction_PID = PID(5, 0.1, 0)
+            y_direction_PID = PID(5, 0.1, 0)
 
             while abs(x_pos -_target_x) > _pidDistanceThreshold or abs(y_pos -_target_y) > _pidDistanceThreshold:
                 x_pos, y_pos = self.get_position_from_encoders()
@@ -288,6 +293,8 @@ class Robot(GameObject):
 
                 output_x = x_direction_PID.update(error_x, self.delta_time)
                 output_y = y_direction_PID.update(error_y, self.delta_time)
+
+                self.drive(output_x, output_y, 0, square_input=False)
 
 
                 print("Target:")
@@ -314,7 +321,7 @@ class Robot(GameObject):
 
     
     def run_autonomous(self, procedure):
-        # r.position = (autonomousProcedureLeft[0]["setX"],autonomousProcedureLeft[0]["setY"])
+        r.position = (procedure[0]["setX"],procedure[0]["setY"])
         ### Update loop
         t = Thread(self.forever_update)
         self.update()
@@ -512,7 +519,7 @@ class Robot(GameObject):
         roller_motor.set_velocity(-100, PERCENT)
 
 ##### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ### 
-    def drive(self, _x_vector, _y_vector, _r_vector, field_based_driving = False, constant_acceleration = True):
+    def drive(self, _x_vector, _y_vector, _r_vector, field_based_driving = False, constant_acceleration = True, square_input = True):
 
         left_motor_a.spin(FORWARD)
         left_motor_b.spin(FORWARD)
@@ -533,10 +540,14 @@ class Robot(GameObject):
         # 10 spins, 9.6 seconds
         # 10 spins, 10.98 seconds
         # Square the input vectors and divide by 100 for better controls
-        x_vector = (_x_vector ** 2) / 100 * sign(_x_vector)
-        y_vector = (_y_vector ** 2) / 100 * sign(_y_vector)
-        r_vector = (_r_vector ** 2) / 100 * sign(_r_vector)
-
+        if square_input:
+            x_vector = (_x_vector ** 2) / 100 * sign(_x_vector)
+            y_vector = (_y_vector ** 2) / 100 * sign(_y_vector)
+            r_vector = (_r_vector ** 2) / 100 * sign(_r_vector)
+        else:
+            x_vector = _x_vector
+            y_vector = _y_vector
+            r_vector = _r_vector
         ### HAVE DAVID TRY THIS OUT (sqrt the input might be better for da vid)
         # x_vector = (abs(_x_vector) ** (0.5)) * 10 * sign(_x_vector)
         # y_vector = (abs(_y_vector) ** (0.5)) * 10 * sign(_y_vector)
@@ -728,15 +739,15 @@ autonomousSpinRollerClose =  [
 
 autonomousCircleTest = [
     {
-        "setX" : 0,
-        "setY" : 0,
+        "setX" : cos(0) * 25,
+        "setY" : sin(0) * 25 ,
     }
 ]
 
 for i in range(100):
     autonomousCircleTest.append({
-        "x" : round(cos(i / 10) * 10),
-        "y" : round(sin(i / 10) * 10),
+        "x" : round(cos(i / 10) * 25),
+        "y" : round(sin(i / 10) * 25),
     })
 
 def get_angle_to_object(gameobject_1, gameobject_2):
