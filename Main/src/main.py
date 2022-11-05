@@ -87,7 +87,6 @@ class Vector:
 
 class PID: 
     previous_value = None
-    previous_time = None
 
     integral_error = 0
     derivative_error = 0
@@ -98,12 +97,17 @@ class PID:
         self.kI = kI
         self.kD = kD
     
-    def update(self, _value):
-        self.integral_error += _value
+    def update(self, _value, delta_time = None):
+        if delta_time != None:
+            self.integral_error += _value * delta_time    
+        else:
+            self.integral_error += _value
 
         if self.previous_value != None:
             # Compute derivative term
             self.derivative_error = _value - self.previous_value
+        
+        self.previous_value = _value
         
         return _value * self.kP + self.integral_error * self.kI + self.derivative_error * self.kD
 
@@ -159,6 +163,8 @@ class Robot(GameObject):
 
     max_velocity: float
     max_acceleration: float
+
+    previous_theta = 0
 
     def __init__(self, x_pos = 0, y_pos = 0, theta = 0):
         super().__init__(x_pos, y_pos)
@@ -216,20 +222,20 @@ class Robot(GameObject):
 
     def get_position_from_encoders(self):
         encoders = self.get_current_wheel_encoder_values()
-        x_value = (encoders[0] - encoders[1] - encoders[2] + encoders[3]) / 4
-        y_value = (encoders[0] + encoders[1] + encoders[2] + encoders[3]) / 4
+        x_value = (encoders[0] - encoders[1] - encoders[2] + encoders[3]) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2) / 4
+        y_value = (encoders[0] + encoders[1] + encoders[2] + encoders[3]) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2) / 4
         return x_value, y_value
 
-    def go_to_position(self, _x, _y, _pid=False, _pidDistanceThreshold = 1): # Target position in cm
+    def go_to_position(self, _target_x,_target_y, _pid=False, _pidDistanceThreshold = 1): # Target position in cm
         # Offset the target position by the robot's current position
-        delta_x = _x - self.x_pos
-        delta_y = _y - self.y_pos
+        delta_x = _target_x - self.x_pos
+        delta_y =_target_y - self.y_pos
 
         # Reset the motor positions (this can be omitted)
         # self.reset_motor_positions()    
 
-        # self.x_pos = _x
-        # self.y_pos = _y
+        # self.x_pos = _target_x
+        # self.y_pos =_target_y
 
 
         if not _pid:
@@ -263,20 +269,55 @@ class Robot(GameObject):
           self.stop()
         
         else:
-            pass
             # PID loop here, it exists once the wheel distance for each wheel is within _pidDistanceThreshold of the target distance
-            # x_pos, y_pos = self.get_position_from_encoders()
-            # while not ((left_motor_a.position(DEGREES) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2)) < _pidDistanceThreshold)
-            #     print((left_motor_a.position(DEGREES) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2), right_motor_a.position(DEGREES) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2), left_motor_b.position(DEGREES) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2), right_motor_b.position(DEGREES) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2)))
-            #     print("Waiting...")
-            #     wait(0.5, SECONDS)
-            # print("Exiting PID loop...")
-        
+            x_pos, y_pos = self.get_position_from_encoders()
+            x_direction_PID = PID(0, 0, 1)
+            y_direction_PID = PID(0, 0, 1)
+
+            while abs(x_pos -_target_x) > _pidDistanceThreshold or abs(y_pos -_target_y) > _pidDistanceThreshold:
+                x_pos, y_pos = self.get_position_from_encoders()
+                
+
+                # theta_to_target = math.atan(_target_y / (_target_x + 0.00001)) # 0.00001 is to prevent division by zero
+                # if x_pos < 0: # expand domain of arctan
+                #     theta_to_target += math.pi
+                
+                # Speed towards target will be controlled by PID loop
+                error_x = _target_x - x_pos
+                error_y = _target_y - y_pos
+
+                output_x = x_direction_PID.update(error_x, self.delta_time)
+                output_y = y_direction_PID.update(error_y, self.delta_time)
+
+
+                print("Target:")
+                print("x:", _target_x)
+                print("y:",_target_y)
+                print("Current:")
+                print("x:", x_pos)
+                print("y:", y_pos)
+                print("Encoders:")
+                print((left_motor_a.position(DEGREES) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2), right_motor_a.position(DEGREES) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2), left_motor_b.position(DEGREES) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2), right_motor_b.position(DEGREES) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2)))
+                print("Output:")
+                print("x:", output_x)
+                print("y:", output_y)
+                print("Waiting...")
+                print("")
+                wait(self.delta_time, SECONDS)
+            print("Exiting PID loop...")
+    
+    def forever_update(self):
+        while True:
+            self.update()
+            wait(0.01, SECONDS)
           
 
     
     def run_autonomous(self, procedure):
         # r.position = (autonomousProcedureLeft[0]["setX"],autonomousProcedureLeft[0]["setY"])
+        ### Update loop
+        t = Thread(self.forever_update)
+        self.update()
         
         for step in procedure:
             if "actions" in step.keys():
@@ -297,9 +338,12 @@ class Robot(GameObject):
                 brain.screen.print(step["message"])
                 brain.screen.next_row()
 
+            ## TODO: add threading here
             if "x" in step.keys() and "y" in step.keys():
                 print("Going to position:", step["x"], step["y"])
-                t = Thread(r.go_to_position, (step["x"], step["y"], True, 1))
+                r.go_to_position(step["x"], step["y"], True, 1)
+        
+        t.stop()
             
 
                 
@@ -358,9 +402,13 @@ class Robot(GameObject):
         self.x_velocity /= 4
         self.y_velocity /= 4
 
+
         self.theta = inertial.heading(DEGREES)
+        self.angular_velocity = (self.theta - self.previous_theta) / self.delta_time
+        
         
         self.previous_wheel_encoder_values = self.get_current_wheel_encoder_values()
+        self.previous_theta = self.theta
 
         self.previous_update_time = getattr(time, "ticks_ms")() / 1000
 
@@ -685,10 +733,10 @@ autonomousCircleTest = [
     }
 ]
 
-for i in range(1000):
+for i in range(100):
     autonomousCircleTest.append({
-        "x" : round(cos(i / 10) * 100),
-        "y" : round(sin(i / 10) * 100),
+        "x" : round(cos(i / 10) * 10),
+        "y" : round(sin(i / 10) * 10),
     })
 
 def get_angle_to_object(gameobject_1, gameobject_2):
@@ -717,7 +765,7 @@ def driver_control():
     while True:
         # Update the robot's information
         r.update()
-        print(r.x_velocity, r.y_velocity)
+        print(r.get_position_from_encoders())
         # print(r.get_position_from_encoders())
         # robot axis are based on x, y, and r vectors
         r.drive(controller_1.axis4.position(), controller_1.axis3.position(), controller_1.axis1.position(), False, True)
@@ -740,7 +788,7 @@ def driver_control():
             roller_motor.set_velocity(0, PERCENT)
         
         ### Remove this if we are not experining good riving
-        wait(0.02, SECONDS)
+        wait(0.01, SECONDS)
     
 
 def init():
@@ -787,18 +835,20 @@ def init():
 from vex import *
 
 init()
-# autonomous()
-driver_control()
+autonomous()
+# driver_control()
 print("Autonomous is done..")
 # driver_control()
 # competition = Competition(driver_control, autonomous)
 
 ### TODOS:
-# Smoother driving control
-# Make a maximum acceleration
-# Figure out how to make it so that motors go from go_to_position mode to drive mode
-# Make it so that the motors stop instead of coast
+# DONE Smoother driving control
+# DONE Make a maximum acceleration
+# DONE Figure out how to make it so that motors go from go_to_position mode to drive mode
+# DONE Make it so that the motors stop instead of coast
 # HAVE DAVID TRY THIS OUT
+# use threads for auto mode to do multiple commands
+# test to see if threads die when they lose scope
 
 # Change these to numpy arrays
 # Change this to be relative to the match time???
