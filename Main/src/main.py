@@ -638,25 +638,28 @@ class Robot(GameObject):
         # Cool driving toggle (basically you rotate the target direction vector based on)
         # the robots heading (https://stackoverflow.com/questions/14607640/rotating-a-vector-in-3d-space) 
         if field_based_driving:
-            # print("Previous" + str(_x_vector) + "\t" + str(_y_vector))
-            _x_vector = cos(self.theta * DEG_TO_RAD) * _x_vector - sin(self.theta * DEG_TO_RAD) * _y_vector
-            _y_vector = cos(self.theta * DEG_TO_RAD) * _y_vector + sin(self.theta * DEG_TO_RAD) * _x_vector
-            # print("After" + str(_x_vector) + "\t" + str(_y_vector))
-            print("")
-
+            print("x before: " + str(_x_vector), "y before: " + str(_y_vector))
+            x_vector = cos(self.theta * DEG_TO_RAD) * _x_vector - sin(self.theta * DEG_TO_RAD) * _y_vector
+            y_vector = cos(self.theta * DEG_TO_RAD) * _y_vector + sin(self.theta * DEG_TO_RAD) * _x_vector
+            r_vector = _r_vector
+        else:
+            x_vector = _x_vector
+            y_vector = _y_vector
+            r_vector = _r_vector
+        
+        
+            
         # 10 spins, 9.49 seconds
         # 10 spins, 10.82 seconds
         # 10 spins, 9.6 seconds
         # 10 spins, 10.98 seconds
         # Square the input vectors and divide by 100 for better controls
         if square_input:
-            x_vector = (_x_vector ** 2) / 100 * sign(_x_vector)
-            y_vector = (_y_vector ** 2) / 100 * sign(_y_vector)
-            r_vector = (_r_vector ** 2) / 100 * sign(_r_vector)
-        else:
-            x_vector = _x_vector
-            y_vector = _y_vector
-            r_vector = _r_vector
+            x_vector = (x_vector ** 2) / 100 * sign(x_vector)
+            y_vector = (y_vector ** 2) / 100 * sign(y_vector)
+            r_vector = (r_vector ** 2) / 100 * sign(r_vector)
+            
+        print("x after: " + str(x_vector), "y after: " + str(y_vector))
         ### HAVE DAVID TRY THIS OUT (sqrt the input might be better for da vid)
         # x_vector = (abs(_x_vector) ** (0.5)) * 10 * sign(_x_vector)
         # y_vector = (abs(_y_vector) ** (0.5)) * 10 * sign(_y_vector)
@@ -883,20 +886,28 @@ def get_angle_to_object(gameobject_1, gameobject_2):
 def autonomous():
     # init() # Init a second time (Hopefully to fix the problem with the motors breaking for some reason)
     r.run_autonomous(autonomousCircleTest)
-    r.stop()
+    r.stop_moving()
 
 def driver_control():
     # Change this to be relative to the match time???
+    t = Timer()
+    t.reset()
     while True:
         # Update the robot's information
         r.update()
-        print(r.get_position_from_encoders())
+
+        # Timer to print things out to the terminal every x seconds
+        if(t.time() > 1 * 1000):
+            print("theta:",r.theta)
+            print("x after:", cos(r.theta * DEG_TO_RAD) * controller_1.axis4.position() - sin(r.theta * DEG_TO_RAD) * controller_1.axis3.position())
+            print("y after:",cos(r.theta * DEG_TO_RAD) * controller_1.axis3.position() + sin(r.theta * DEG_TO_RAD) * controller_1.axis4.position())
+
+            t.reset()
+
         # print(r.get_position_from_encoders())
         # robot axis are based on x, y, and r vectors
-        r.drive(controller_1.axis4.position(), controller_1.axis3.position(), controller_1.axis1.position(), False, True)
+        r.drive(0 * controller_1.axis4.position(), controller_1.axis3.position(), controller_1.axis1.position(), True, True)
         
-
-
         # Run the intake subsystem, set the desired speed
         r.intake(controller_1.axis2.position())
 
@@ -960,8 +971,8 @@ def init():
 from vex import *
 
 init()
-autonomous()
-# driver_control()
+# autonomous()
+driver_control()
 print("Autonomous is done..")
 # driver_control()
 # competition = Competition(driver_control, autonomous)
