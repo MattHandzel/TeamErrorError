@@ -165,8 +165,12 @@ class Robot(GameObject):
         self.theta = theta
 
         self.max_velocity = ((self.wheel_max_rpm / 60) * math.pi * 2 * self.wheel_diameter_CM / math.sqrt(2)) # what our max velocity "should" be (can go higher or lower)
-        self.max_acceleration = 2 * self.max_velocity / 0.5 # This number in the divisor means it will speedup/slow down in that many seeconds 
+        self.max_acceleration = 2 * self.max_velocity / 0.1 # This number in the divisor means it will speedup/slow down in that many seeconds 
+
 ##### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ###
+    def set_time_to_top_speed(self, _time):
+        self.max_acceleration = 2 * self.max_velocity / _time
+    
     @staticmethod
     def reset_motor_positions():
         left_motor_a.set_position(0, DEGREES)
@@ -209,6 +213,12 @@ class Robot(GameObject):
 
     
 ##### AUTO ### AUTO ### AUTO ### AUTO ### AUTO ### AUTO ### AUTO ### AUTO ### AUTO ### AUTO ### 
+
+    def get_position_from_encoders(self):
+        encoders = self.get_current_wheel_encoder_values()
+        x_value = (encoders[0] - encoders[1] - encoders[2] + encoders[3]) / 4
+        y_value = (encoders[0] + encoders[1] + encoders[2] + encoders[3]) / 4
+        return x_value, y_value
 
     def go_to_position(self, _x, _y, _pid=False, _pidDistanceThreshold = 1): # Target position in cm
         # Offset the target position by the robot's current position
@@ -253,12 +263,14 @@ class Robot(GameObject):
           self.stop()
         
         else:
+            pass
             # PID loop here, it exists once the wheel distance for each wheel is within _pidDistanceThreshold of the target distance
-            while not ((left_motor_a.position(DEGREES) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2)) < _pidDistanceThreshold and (right_motor_a.position(DEGREES) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2)) < _pidDistanceThreshold and (left_motor_b.position(DEGREES) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2)) < _pidDistanceThreshold and (right_motor_b.position(DEGREES) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2)) < _pidDistanceThreshold):
-                print((left_motor_a.position(DEGREES) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2), right_motor_a.position(DEGREES) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2), left_motor_b.position(DEGREES) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2), right_motor_b.position(DEGREES) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2)))
-                print("Waiting...")
-                wait(0.5, SECONDS)
-            print("Exiting PID loop...")
+            # x_pos, y_pos = self.get_position_from_encoders()
+            # while not ((left_motor_a.position(DEGREES) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2)) < _pidDistanceThreshold)
+            #     print((left_motor_a.position(DEGREES) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2), right_motor_a.position(DEGREES) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2), left_motor_b.position(DEGREES) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2), right_motor_b.position(DEGREES) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2)))
+            #     print("Waiting...")
+            #     wait(0.5, SECONDS)
+            # print("Exiting PID loop...")
         
           
 
@@ -339,8 +351,8 @@ class Robot(GameObject):
         delta_encoders = (self.get_current_wheel_encoder_values() - self.previous_wheel_encoder_values)
 
         ### Get the velocity of the robot in deg/s for 4 wheels
-        self.x_velocity = (-delta_encoders[0] + delta_encoders[1] + delta_encoders[2] - delta_encoders[3]) / self.delta_time
-        self.y_velocity = -1 * (delta_encoders[0] + delta_encoders[1] + delta_encoders[2] + delta_encoders[3]) / self.delta_time 
+        self.x_velocity = (delta_encoders[0] - delta_encoders[1] - delta_encoders[2] + delta_encoders[3]) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2) / self.delta_time
+        self.y_velocity = (delta_encoders[0] + delta_encoders[1] + delta_encoders[2] + delta_encoders[3]) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2) / self.delta_time 
 
         ### Divide by 4 because we have it for 4 wheels rn
         self.x_velocity /= 4
@@ -490,21 +502,40 @@ class Robot(GameObject):
         right_motor_b_target_velocity = x_vector + y_vector - r_vector
 
         
+        ### Constant-ish acceleration profile. Basically, our acceleration is constant except for when we are close to starting or stopping (to prevent jerks/slides)
         if constant_acceleration:
+            
+            slow_down_speed_threshold = 5
+
+            max_acceleration_left_motor_a = self.max_acceleration
+            max_acceleration_right_motor_a = self.max_acceleration
+            max_acceleration_left_motor_b = self.max_acceleration
+            max_acceleration_right_motor_b = self.max_acceleration
+
+            # If we aren't moving from a stop to a start or vice versa, decrease acceleration
+            if abs(left_motor_a.velocity(PERCENT)) < slow_down_speed_threshold:
+                max_acceleration_left_motor_a = self.max_acceleration * 2
+            
+            if abs(right_motor_a.velocity(PERCENT)) < slow_down_speed_threshold:
+                max_acceleration_right_motor_a = self.max_acceleration * 2
+            
+            if abs(left_motor_b.velocity(PERCENT)) < slow_down_speed_threshold:
+                max_acceleration_left_motor_b = self.max_acceleration * 2
+            
+            if abs(right_motor_b.velocity(PERCENT)) < slow_down_speed_threshold:
+                max_acceleration_right_motor_b = self.max_acceleration * 2
+
+
             # Okie doki, this line is gonna need some documentation, but first some labels:
             # (self.max_acceleration / self.max_velocity * 100) means the maximum acceleration of our robot IN A PERCENTAGE (i.e. 10 percent per second, 50 percent per second, -10 percent, per second)
             # (self.max_acceleration / self.max_velocity * 100) * self.delta_time is the maximum change in velocity of the robot FOR THIS RUN THROUGH THE LOOP (by multipling by delta time we get how long its been since the last loop, which means we can change our velocity by that change in time time acceleration), Ex. if its been 0.1 seconds since the last loop, then our change in velocity can be 10 percent, but if it was 1 second then our change in velocity can be 100 percent beceause its been such a long time (if you still don't understand then learn what integration is)
             # the goal of the following lines is to clamp the change in velocity to not go over some number (max_acceleration),
             # so in order to do that we clamp motor_target_velocity between the motor_current_velocity plus the maximum change in velocity for this run of the loop, repeat for each wheel
-            print("Before Clamping: delta_time:", self.delta_time)
-            print(left_motor_a_target_velocity, right_motor_a_target_velocity, left_motor_b_target_velocity, right_motor_b_target_velocity)
-            left_motor_a_target_velocity = clamp(left_motor_a_target_velocity, (self.max_acceleration / self.max_velocity * 100) * self.delta_time + left_motor_a.velocity(PERCENT), -(self.max_acceleration / self.max_velocity * 100) * self.delta_time + left_motor_a.velocity(PERCENT))
-            right_motor_a_target_velocity = clamp(right_motor_a_target_velocity, (self.max_acceleration / self.max_velocity * 100) * self.delta_time + right_motor_a.velocity(PERCENT), -(self.max_acceleration / self.max_velocity * 100) * self.delta_time + right_motor_a.velocity(PERCENT))
-            left_motor_b_target_velocity = clamp(left_motor_b_target_velocity, (self.max_acceleration / self.max_velocity * 100) * self.delta_time + left_motor_b.velocity(PERCENT), -(self.max_acceleration / self.max_velocity * 100) * self.delta_time + left_motor_b.velocity(PERCENT))
-            right_motor_b_target_velocity = clamp(right_motor_b_target_velocity, (self.max_acceleration / self.max_velocity * 100) * self.delta_time + right_motor_b.velocity(PERCENT), -(self.max_acceleration / self.max_velocity * 100) * self.delta_time + right_motor_b.velocity(PERCENT))
+            left_motor_a_target_velocity = clamp(left_motor_a_target_velocity, (max_acceleration_left_motor_a / self.max_velocity * 100) * self.delta_time + left_motor_a.velocity(PERCENT), -(max_acceleration_left_motor_a / self.max_velocity * 100) * self.delta_time + left_motor_a.velocity(PERCENT))
+            right_motor_a_target_velocity = clamp(right_motor_a_target_velocity, (max_acceleration_right_motor_a / self.max_velocity * 100) * self.delta_time + right_motor_a.velocity(PERCENT), -(max_acceleration_right_motor_a / self.max_velocity * 100) * self.delta_time + right_motor_a.velocity(PERCENT))
+            left_motor_b_target_velocity = clamp(left_motor_b_target_velocity, (max_acceleration_left_motor_b / self.max_velocity * 100) * self.delta_time + left_motor_b.velocity(PERCENT), -(max_acceleration_left_motor_b / self.max_velocity * 100) * self.delta_time + left_motor_b.velocity(PERCENT))
+            right_motor_b_target_velocity = clamp(right_motor_b_target_velocity, (max_acceleration_right_motor_b / self.max_velocity * 100) * self.delta_time + right_motor_b.velocity(PERCENT), -(max_acceleration_right_motor_b / self.max_velocity * 100) * self.delta_time + right_motor_b.velocity(PERCENT))
 
-            print("After clamping:")
-            print(left_motor_a_target_velocity, right_motor_a_target_velocity, left_motor_b_target_velocity, right_motor_b_target_velocity)
             # Accelerate the motors to the target velocity
             left_motor_a.set_velocity(left_motor_a_target_velocity, PERCENT)
             right_motor_a.set_velocity(right_motor_a_target_velocity, PERCENT)
@@ -686,7 +717,8 @@ def driver_control():
     while True:
         # Update the robot's information
         r.update()
-
+        print(r.x_velocity, r.y_velocity)
+        # print(r.get_position_from_encoders())
         # robot axis are based on x, y, and r vectors
         r.drive(controller_1.axis4.position(), controller_1.axis3.position(), controller_1.axis1.position(), False, True)
         
@@ -708,7 +740,7 @@ def driver_control():
             roller_motor.set_velocity(0, PERCENT)
         
         ### Remove this if we are not experining good riving
-        wait(0.1, SECONDS)
+        wait(0.02, SECONDS)
     
 
 def init():
