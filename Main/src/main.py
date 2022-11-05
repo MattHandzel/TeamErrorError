@@ -42,14 +42,23 @@ from math import sin, cos
 r2o2 = math.sqrt(2) / 2
 
 def sign(num):
+    '''
+    Returns the sign of the number
+    '''
     if num == 0:
         return 1.0
     return abs(num) / num
     
 def clamp(num, _max, _min):
+    '''
+    Clamps the number between the max and min
+    '''
     return max(min(num, _max), _min)
 
 class Vector:
+    '''
+    Vector class I wrote because basic python lists are annoying
+    '''
     def __init__(self, data):
         self.data = data
     
@@ -69,23 +78,12 @@ class Vector:
     
     def __repr__(self):
         return "Vector:\t"+ repr(self.data)
-### UTIL FUNCTIONS (NOT SPECIFIC)
-
-
-
-# class Timer:
-    
-#     def __init__(self):
-#       pass
-
-#     def start(self):
-#       self.start_time = time.time()
-    
-#     def time(self):
-#       return time.time() - self.start_time
 
 
 class PID: 
+    '''
+    Your standard PID controller (look up on wikipedia if you don't know what it is)
+    '''
     previous_value = None
 
     integral_error = 0
@@ -98,6 +96,9 @@ class PID:
         self.kD = kD
     
     def update(self, _value, delta_time = None):
+        '''
+        Updates the PID controller with the new value, optional delta_time parameter means you can use this for non-constant time steps
+        '''
         if delta_time != None:
             self.integral_error += _value * delta_time    
         else:
@@ -112,16 +113,27 @@ class PID:
         return _value * self.kP + self.integral_error * self.kI + self.derivative_error * self.kD
 
     def set_constants(self, kP, kI, kD):
+        '''
+        Updates the constants of the PID controller
+        '''
         self.kP = kP
         self.kI = kI
         self.kD = kD
     
     def reset(self):
+        '''
+        Resets the PID controller
+        '''
         self.integral_error = 0
         self.previous_value = None
         
     
 class TargetPoint:
+    '''
+    This is the target point class, it can be used for PID controller/path following in the future (i haven't done it yet),
+    but how it intends to work is to have the robot go to a list of target points, if it is within a threshold then it is allowed
+    to go to the next target point
+    '''
     def __init__(self, _x, _y, _total_tolerance_or_just_x_tolerance, _tolerance_y = -1):
         self.x = _x
         self.y = _y
@@ -137,6 +149,9 @@ class TargetPoint:
     
 
 class GameObject:
+    '''
+    If we want to introduce game object (like say the goal or barriers), we have have to robot look up important information about the game object
+    '''
     def __init__(self, x_pos, y_pos):
         self.x_pos = x_pos
         self.y_pos = y_pos
@@ -148,19 +163,22 @@ class GameObject:
 ##### START OF ROBOT CLASS ### START OF ROBOT CLASS ### START OF ROBOT CLASS ### START OF ROBOT CLASS ###
 
 class Robot(GameObject):
-    theta_shooter = 20
-    theta_robot = 0
-    length = 38.1
+    '''
+    This is the big-boy class, this is the robot class, this is the class that controls the robot, there is a lot of stuff here
+    '''
+    theta_shooter: float = 20
+    theta_robot: float = 0
+    length: float = 38.1
     
-    theta = 0
+    theta: float = 0
 
-    x_velocity = 0
-    y_velocity = 0
+    x_velocity: float = 0
+    y_velocity: float = 0
 
     previous_wheel_encoder_values = Vector([0,0,0,0])
-    previous_sum_of_wheel_encoders = 0
+    previous_sum_of_wheel_encoders: int = 0
 
-    previous_update_time = 0
+    previous_update_time: float = 0
 
     wheel_max_rpm : float = 200
     wheel_diameter_CM: float = 10.5
@@ -172,6 +190,13 @@ class Robot(GameObject):
     previous_theta = 0
 
     def __init__(self, x_pos = 0, y_pos = 0, theta = 0):
+        '''
+        Initializes the robot class, computes the max velocity and acceleration
+        params -
+            x_pos - set the robot's x position
+            y_pos - set the robot's y position
+            theta - set the robot's theta
+        '''
         super().__init__(x_pos, y_pos)
         self.theta = theta
 
@@ -180,10 +205,16 @@ class Robot(GameObject):
 
 ##### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ###
     def set_time_to_top_speed(self, _time):
+        '''
+        Change the maximum acceleration of the robot so that it will reach max velocity in the given time
+        '''
         self.max_acceleration = 2 * self.max_velocity / _time
     
     @staticmethod
     def reset_motor_positions():
+        '''
+        Resets the motor positions
+        '''
         left_motor_a.set_position(0, DEGREES)
         right_motor_a.set_position(0, DEGREES)
         left_motor_b.set_position(0, DEGREES)
@@ -200,6 +231,9 @@ class Robot(GameObject):
         return has_moved_boolean
     
     def set_team(self, _color):
+        '''
+        Sets the team for the robot so that we can move the rollers to our team color, or shoot disks just into our goal, etc.
+        '''
         _color = _color.lower()
         print("INPUT FROM SET_TEAM IS:\t", _color)
         if _color == "red":
@@ -212,10 +246,15 @@ class Robot(GameObject):
 
 
     def reset_theta(self):
+        '''
+        Resets the theta of the robot to 0
+        '''
         self.theta = 0
 
-
-    def stop(self):
+    def stop_moving(self):
+        '''
+        Stops all of the motors of the robot (this is good for when we want to switch from run_to_position mode to just spin mode (my nomaclature))
+        '''
         left_motor_a.stop()
         left_motor_b.stop()
         right_motor_a.stop()
@@ -226,12 +265,25 @@ class Robot(GameObject):
 ##### AUTO ### AUTO ### AUTO ### AUTO ### AUTO ### AUTO ### AUTO ### AUTO ### AUTO ### AUTO ### 
 
     def get_position_from_encoders(self):
+        '''
+        Computes the robot's current position from encoders, something that's very cool is that the robot rotating doesn't change this
+        '''
         encoders = self.get_current_wheel_encoder_values()
+
+        # Compute the position from the encoders, we get this by summing up the encoders based on if they contribute to the robot moving in one direction
+        # and then divide it from the cm/deg coefficient which means that we turn the encoder values into cm, and we divide by 4 because there are 4 wheels
         x_value = (encoders[0] - encoders[1] - encoders[2] + encoders[3]) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2) / 4
         y_value = (encoders[0] + encoders[1] + encoders[2] + encoders[3]) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2) / 4
         return x_value, y_value
 
     def go_to_position(self, _target_x,_target_y, _pid=False, _pidDistanceThreshold = 1): # Target position in cm
+        '''
+        Function that will move the robot to a target position
+        params: _target_x is the target x position in cm (from the origin)
+                _target_y is the target y position in cm (from the origin)
+                _pid is a boolean that will determine if the robot will use PID or not
+                _pidDistanceThreshold is the distance threshold in cm that the robot uses to determin if it's close enough to the target point
+        '''
         # Offset the target position by the robot's current position
         delta_x = _target_x - self.x_pos
         delta_y =_target_y - self.y_pos
@@ -251,11 +303,6 @@ class Robot(GameObject):
           left_motor_b_target_position = -delta_x * self.wheel_distance_CM_to_DEG_coefficient * r2o2 + delta_y * self.wheel_distance_CM_to_DEG_coefficient * r2o2
           right_motor_b_target_position = delta_x * self.wheel_distance_CM_to_DEG_coefficient * r2o2 + delta_y * self.wheel_distance_CM_to_DEG_coefficient * r2o2
 
-          # print("left_motor_a_target_position:", left_motor_a_target_position)
-          # print("right_motor_a_target_position:", right_motor_a_target_position)
-          # print("left_motor_b_target_position:", left_motor_b_target_position)
-          # print("right_motor_b_target_position:", right_motor_b_target_position)
-
           left_motor_a.set_velocity(10,PERCENT)
           right_motor_a.set_velocity(10,PERCENT)
           left_motor_b.set_velocity(10,PERCENT)
@@ -271,7 +318,7 @@ class Robot(GameObject):
             print("waiting...")
             wait(0.5, SECONDS)
           print("Done!")
-          self.stop()
+          self.stop_moving()
         
         else:
             # PID loop here, it exists once the wheel distance for each wheel is within _pidDistanceThreshold of the target distance
@@ -314,17 +361,40 @@ class Robot(GameObject):
                 print("y:", sin(theta_to_target) * output_magnitude)
                 print("Waiting...")
                 print("")
+
+                # Gonne be sleeping based off of self.delta time so that this loop doesn't update more frequently then delta_time (to make sure the PID loop's I error term doesn't explode quickly)
                 wait(self.delta_time, SECONDS)
             print("Exiting PID loop...")
     
-    def forever_update(self):
+    def forever_update(self, _delat = 0.01):
+        '''
+        This is used in a Thread() so that we run the update function constantly (because its very freaking important)
+        '''
         while True:
             self.update()
-            wait(0.001, SECONDS)
+            wait(_delat, SECONDS)
           
 
     
     def run_autonomous(self, procedure):
+        '''
+        Given an autonomous procedure, this function will run the procedure
+        procedure has very important requirements optional params:
+            setX - sets the x position of the robot
+            setY - sets the y position of the robot
+            setTheta - sets the theta of the robot
+            x - move the robot to that x position
+            y - move the robot to that y position
+            theta - rotate the robot to that theta
+            wait - wait for that many seconds
+            actions - a list of actions to run
+                unload - unload the disc
+                load - load the disc
+                shoot - shoot the disc
+                spin_roller - spin the roller
+            message - a message to print to the console and brain (for debugging purposes)
+        
+        '''
         ### Update loop
         t = Thread(self.forever_update)
         self.update()
@@ -363,6 +433,9 @@ class Robot(GameObject):
                 
     
     def turn_to_heading(self, _heading, _wait = True):
+        '''
+        Makes the robot turn to a specific heading
+        '''
         # There are two ways to approach this, one of them is to compute the positions 
         # that the motors need to go to in order to turn the robot (that number can be)
         # calculated by figuring out the circumference that the robot will rotate around
@@ -374,7 +447,8 @@ class Robot(GameObject):
         pass
 
     
-
+    
+    # if you are readign this code and are not me (Matt Handzel) and don't know what this is, then look up python getters and setters
     @property
     def position(self):
         return (self.x_pos, self.y_pos)
@@ -397,6 +471,10 @@ class Robot(GameObject):
         intake_motor.set_velocity(0,PERCENT)
     
     def update(self):
+        '''
+        This is a VERY important function, it should be called once every [0.1 - 0.01] seconds (the faster the better, especially for controls)
+        It updates the robot's position based off of the encoders and the gyro
+        '''
         # TODO: Set position based off of the gps 
         self.delta_time = getattr(time, "ticks_ms")() / 1000 - self.previous_update_time
         # funcs = ([(getattr(time,attr)) for attr in dir(time)[2:]])
@@ -408,18 +486,15 @@ class Robot(GameObject):
         ### TODO: Make change these to numpy arrays
         delta_encoders = (self.get_current_wheel_encoder_values() - self.previous_wheel_encoder_values)
 
+        ### Use encoders to get our x and y positions so that we can take the derivative and get our velocity
+        x_from_encoders, y_from_encoders = self.get_position_from_encoders()
+
         ### Get the velocity of the robot in deg/s for 4 wheels
-        self.x_velocity = (delta_encoders[0] - delta_encoders[1] - delta_encoders[2] + delta_encoders[3]) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2) / self.delta_time
-        self.y_velocity = (delta_encoders[0] + delta_encoders[1] + delta_encoders[2] + delta_encoders[3]) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2) / self.delta_time 
-
-        ### Divide by 4 because we have it for 4 wheels rn
-        self.x_velocity /= 4
-        self.y_velocity /= 4
-
+        self.x_velocity = x_from_encoders / self.delta_time
+        self.y_velocity = y_from_encoders / self.delta_time 
 
         self.theta = inertial.heading(DEGREES)
         self.angular_velocity = (self.theta - self.previous_theta) / self.delta_time
-        
         
         self.previous_wheel_encoder_values = self.get_current_wheel_encoder_values()
         self.previous_theta = self.theta
@@ -427,13 +502,17 @@ class Robot(GameObject):
         self.previous_update_time = getattr(time, "ticks_ms")() / 1000
 
     def get_current_wheel_encoder_values(self):
+        '''
+        Returns a vector of all of the encoder values
+        '''
         return Vector([left_motor_a.position(DEGREES), right_motor_a.position(DEGREES), left_motor_b.position(DEGREES), right_motor_b.position(DEGREES)])
 
-
-
-    def turn_to_object(self, gameobject):
+    def turn_to_object(self, _gameobject):
+        '''
+        This function will have the robot turn to face the object
+        '''
         # Get the delta theta needed for the robot to turn
-        delta_theta = (get_angle_to_object(r, red_goal) - inertial.heading(DEGREES))
+        delta_theta = (get_angle_to_object(r, _gameobject) - inertial.heading(DEGREES))
         
         # Makes delta theta to go from [0, 360)
         while delta_theta < 0:
@@ -446,9 +525,10 @@ class Robot(GameObject):
             delta_theta -= 360
         elif delta_theta < -180:
             delta_theta += 360
+        
+        # Use a PID loop or just basic controls to have the robot turn towards the object here
 
     
-        return delta_theta
 
 ##### SHOOTER ### SHOOTER ### SHOOTER ### SHOOTER ### SHOOTER ### SHOOTER ### SHOOTER ### SHOOTER ### 
     @staticmethod
@@ -456,6 +536,9 @@ class Robot(GameObject):
         pass
 
     def shoot_disk(self):
+        '''
+        This function will shoot a disk from the flywheel
+        '''
         # Compute speed that the flywheel needs to speed
 
         # Set the motors to the speed
@@ -469,6 +552,9 @@ class Robot(GameObject):
     
 
     def compute_speed_of_flywheel(self):
+        '''
+        Because we know our distance to the goal, we can compute the speed that the flywheel needs to launch in order to make the disk in
+        '''
         # Equation to find the speed that the flywheel needs:
 
         self.update()
@@ -496,17 +582,24 @@ class Robot(GameObject):
         roller_motor.set_velocity(100, PERCENT)
     
     def auto_spin_roller(self):
+        '''
+        Using an optical sense, we can detect when its our team's color and if it is not then we spin the roller until we do see our team's color
+        '''
+
         # If we are on the red team
         if self.notBlue:
             # Thresholds the roller being the "blue" color
             pass
     
     def spin_roller(self):
+        '''
+        Spin the roller (used during auto mode) before we had the auto_spin_roller funciton
+        '''
         # Set the velocity to an amount to spin the roller
         ## SPINING WITH POSITIVE POWER MAKES THE ROLLERS GO COUNTER CLOCKWISE
         roller_motor.set_velocity(-15, PERCENT)
         # Drive the robot to the right at half speed
-        self.stop()
+        self.stop_moving()
         t = Timer()
 
         t.reset()
@@ -527,7 +620,16 @@ class Robot(GameObject):
 
 ##### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ### 
     def drive(self, _x_vector, _y_vector, _r_vector, field_based_driving = False, constant_acceleration = True, square_input = True):
-
+        '''
+        Drives the robot.
+        params - 
+            x_vector - the speed that the robot will move in the x direction
+            y_vector - the speed that the robot will move in the y direction
+            r_vector - the speed that the robot will rotate
+            field_based_driving - if true, the robot will drive in the same direction regarless of the robot's orientation
+            constant_acceleration - if true, the robot will accelerate at a constant rate
+            square_input - if true, the robot will square the input to make it easier to control
+        '''
         left_motor_a.spin(FORWARD)
         left_motor_b.spin(FORWARD)
         right_motor_a.spin(FORWARD)
