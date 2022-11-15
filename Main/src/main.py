@@ -204,9 +204,20 @@ class Robot(GameObject):
     max_acceleration: float
 
     previous_theta = 0
-    total_theta = 0 
+    total_theta = 0
 
     using_gps = False
+
+    # PID controller constants
+    motor_PID_kP = 10
+    motor_PID_kI = 5
+    motor_PID_kD = 0
+    
+    # Init the PID controllers for the robot
+    left_motor_a_PID = PID(motor_PID_kP,motor_PID_kI,motor_PID_kD)
+    right_motor_a_PID = PID(motor_PID_kP,motor_PID_kI,motor_PID_kD)
+    left_motor_b_PID = PID(motor_PID_kP,motor_PID_kI,motor_PID_kD)
+    right_motor_b_PID = PID(motor_PID_kP,motor_PID_kI,motor_PID_kD)
 
     def __init__(self, x_pos=0, y_pos=0, theta=0):
         '''
@@ -302,7 +313,7 @@ class Robot(GameObject):
         y_value = (encoders[0] + encoders[1] + encoders[2] + encoders[3]
                    ) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2) / 4
         return x_value, y_value
-    
+
     def get_position(self):
         if self.using_gps:
             return gps.x_position(DistanceUnits.CM), gps.y_position(DistanceUnits.CM)
@@ -327,14 +338,6 @@ class Robot(GameObject):
         if not _pid:
             # These are the target position for each wheel, you find the target positions by finding the direction the wheels
             # are pointing in and then multiplying by the sin(theta) for the x and cos(theta) for theta
-            left_motor_a_target_position = delta_x * self.wheel_distance_CM_to_DEG_coefficient * \
-                r2o2 + delta_y * self.wheel_distance_CM_to_DEG_coefficient * r2o2
-            right_motor_a_target_position = -delta_x * self.wheel_distance_CM_to_DEG_coefficient * \
-                r2o2 + delta_y * self.wheel_distance_CM_to_DEG_coefficient * r2o2
-            left_motor_b_target_position = -delta_x * self.wheel_distance_CM_to_DEG_coefficient * \
-                r2o2 + delta_y * self.wheel_distance_CM_to_DEG_coefficient * r2o2
-            right_motor_b_target_position = delta_x * self.wheel_distance_CM_to_DEG_coefficient * \
-                r2o2 + delta_y * self.wheel_distance_CM_to_DEG_coefficient * r2o2
 
             x_pos, y_pos = self.get_position()
 
@@ -344,23 +347,39 @@ class Robot(GameObject):
                 # Speed towards target will be controlled by PID loop
                 error_x = _target_x - x_pos
                 error_y = _target_y - y_pos
-
-                # 0.00001 is to prevent division by zero
-                theta_to_target = math.atan(error_y / (error_x + 0.00001))
-
-                if error_x < 0:  # expand domain of arctan
-                    theta_to_target += math.pi
                 
-                self.drive(math.cos(theta_to_target) * 50, math.sin(theta_to_target) * 50, 0, field_based_driving=True, square_input=False)
+                # Prevent divide by 0 error
+                theta_to_target = 0
+                if error_x != 0:
+                    theta_to_target = math.atan(error_y / (error_x))
+                    
+                    # If theta_to_target is less than 0, then add 180 degrees
+                    theta_to_target += math.pi * (error_x < 0)
 
-
+                self.drive(math.cos(theta_to_target) * 50, math.sin(theta_to_target)
+                           * 50, 0, field_based_driving=True, square_input=False)
 
             print("Done!")
 
         else:
-            # PID loop here, it exists once the wheel distance for each wheel is within _pidDistanceThreshold of the target distance
+            left_motor_a_target_position = delta_x * self.wheel_distance_CM_to_DEG_coefficient * \
+                r2o2 + delta_y * self.wheel_distance_CM_to_DEG_coefficient * r2o2
+            right_motor_a_target_position = -delta_x * self.wheel_distance_CM_to_DEG_coefficient * \
+                r2o2 + delta_y * self.wheel_distance_CM_to_DEG_coefficient * r2o2
+            left_motor_b_target_position = -delta_x * self.wheel_distance_CM_to_DEG_coefficient * \
+                r2o2 + delta_y * self.wheel_distance_CM_to_DEG_coefficient * r2o2
+            right_motor_b_target_position = delta_x * self.wheel_distance_CM_to_DEG_coefficient * \
+                r2o2 + delta_y * self.wheel_distance_CM_to_DEG_coefficient * r2o2
+
+
+            # PID loop here for each wheel
             x_pos, y_pos = self.get_position()
-            magnitude_PID = PID(10, 0.1, 0)
+            
+            # Reset all PID controllers
+            self.left_motor_a_PID.reset()
+            self.right_motor_a_PID.reset()
+            self.left_motor_b_PID.reset()
+            self.right_motor_b_PID.reset()
 
             while abs(x_pos - _target_x) > _pidDistanceThreshold or abs(y_pos - _target_y) > _pidDistanceThreshold:
                 x_pos, y_pos = self.get_position()
@@ -369,38 +388,27 @@ class Robot(GameObject):
                 error_x = _target_x - x_pos
                 error_y = _target_y - y_pos
 
-                # 0.00001 is to prevent division by zero
-                theta_to_target = math.atan(error_y / (error_x + 0.00001))
-
-                if error_x < 0:  # expand domain of arctan
-                    theta_to_target += math.pi
+                # Prevent divide by 0 error
+                theta_to_target = 0
+                if error_x != 0:
+                    theta_to_target = math.atan(error_y / (error_x))
+                    
+                    # If theta_to_target is less than 0, then add 180 degrees
+                    theta_to_target += math.pi * (error_x < 0)
 
                 # output_x = x_magnitude_PID.update(error_x, self.delta_time)
                 # output_y = y_magnitude_PID.update(error_y, self.delta_time)
 
-                output_magnitude = magnitude_PID.update(
-                    (error_x ** 2 + error_y ** 2) ** (0.5), self.delta_time)
+                # output_magnitude = magnitude_PID.update(
+                    # (error_x ** 2 + error_y ** 2) ** (0.5), self.delta_time)
 
-                self.drive(output_magnitude * cos(theta_to_target),
-                           output_magnitude * sin(theta_to_target), 0, square_input=False)
-
-                print("Target:")
-                print("x:", _target_x)
-                print("y:", _target_y)
-                print("Current:")
-                print("x:", x_pos)
-                print("y:", y_pos)
-                print("Encoders:")
-                print((left_motor_a.position(DEGREES) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2), right_motor_a.position(DEGREES) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2),
-                      left_motor_b.position(DEGREES) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2), right_motor_b.position(DEGREES) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2)))
-                print("Output:")
-                print("x:", cos(theta_to_target) * output_magnitude)
-                print("y:", sin(theta_to_target) * output_magnitude)
-                print("Waiting...")
-                print("")
+                # self.drive(output_magnitude * cos(theta_to_target),
+                        #    output_magnitude * sin(theta_to_target), 0, square_input=False)
 
                 # Gonne be sleeping based off of self.delta time so that this loop doesn't update more frequently then delta_time (to make sure the PID loop's I error term doesn't explode quickly)
                 wait(self.delta_time, SECONDS)
+
+            
             print("Exiting PID loop...")
 
     def forever_update(self, _delat=0.01):
@@ -526,17 +534,15 @@ class Robot(GameObject):
         self.x_velocity = x_from_encoders / self.delta_time
         self.y_velocity = y_from_encoders / self.delta_time
 
-
         self.angular_velocity = inertial.gyro_rate(ZAXIS)
-        self.total_theta += self.angular_velocity * self.delta_time / 0.99375  #is a magic number that makes the gyro work better (experimentall I found that when the gyro reported that it spun 1 time, it actually overshot by about 3 degrees)
-        self.theta = self.total_theta - (self.total_theta // 360 * 360) 
-
+        # is a magic number that makes the gyro work better (experimentall I found that when the gyro reported that it spun 1 time, it actually overshot by about 3 degrees)
+        self.total_theta += self.angular_velocity * self.delta_time / 0.99375
+        self.theta = self.total_theta - (self.total_theta // 360 * 360)
 
         self.previous_wheel_encoder_values = self.get_current_wheel_encoder_values()
         self.previous_theta = self.theta
 
         self.previous_update_time = getattr(time, "ticks_ms")() / 1000
-
 
     def get_current_wheel_encoder_values(self):
         '''
@@ -599,7 +605,7 @@ class Robot(GameObject):
         if self.notBlue:
             goal = red_goal
 
-        delta_x = goal.x_pos - self.y_pos
+        delta_x = goal.x_pos - self.x_pos
         delta_y = goal.y_pos - self.y_pos
 
         # TODO: Factor in the position of the shooter
@@ -793,9 +799,7 @@ class Robot(GameObject):
 ########## PATHS ########## PATHS ########## PATHS ########## PATHS ########## PATHS ########## PATHS ##########
 
 
-
-
-######### END OF PATHS ######### END OF PATHS ######### END OF PATHS ######### END OF PATHS ######### END OF PATHS
+# END OF PATHS ######### END OF PATHS ######### END OF PATHS ######### END OF PATHS ######### END OF PATHS
 
 
 def get_angle_to_object(gameobject_1, gameobject_2):
@@ -803,7 +807,7 @@ def get_angle_to_object(gameobject_1, gameobject_2):
     RETURNS IN DEGREES
     TODO: if someone doesn't pass a gameobject then this will break everything
     '''
-    
+
     # Checks to see if both objects are of the GameObject class
     assert isinstance(gameobject_1, GameObject)
     assert isinstance(gameobject_2, GameObject)
@@ -820,20 +824,21 @@ def get_angle_to_object(gameobject_1, gameobject_2):
 
 ######## COMPETITION FUNCTIONS ### COMPETITION FUNCTIONS ### COMPETITION FUNCTIONS ### COMPETITION FUNCTIONS ###
 
+
 def autonomous():
     # init() # Init a second time (Hopefully to fix the problem with the motors breaking for some reason)
     r.run_autonomous({})
     r.stop_moving()
 
 
-# 20 deg off 2 rotations for our method; 26 
-# 
+# 20 deg off 2 rotations for our method; 26
+#
 
 # 19 rotations - 54 seconds 305 deg
 # slow, 4 rotations 85 seconds 346 degrees
-# slow 6 rotations 101 seconds 342 degrees 
+# slow 6 rotations 101 seconds 342 degrees
 
-# medium speed 20 rotations - 314 deg  
+# medium speed 20 rotations - 314 deg
 # fast speed
 
 def driver_control():
@@ -847,7 +852,8 @@ def driver_control():
 
         # Timer to print things out to the terminal every x seconds
         if (timer.time() > 0.5 * 1000):
-            print("theta:", r.theta, "num_rotations:", (r.total_theta // 360) + 1, "anuglar_velocity", inertial.gyro_rate(ZAXIS), " time:", brain.timer.time() / 1000)
+            print("theta:", r.theta, "num_rotations:", (r.total_theta // 360) + 1,
+                  "anuglar_velocity", inertial.gyro_rate(ZAXIS), " time:", brain.timer.time() / 1000)
 
             timer.reset()
 
@@ -871,7 +877,6 @@ def driver_control():
             roller_motor.set_velocity(0, PERCENT)
 
         wait(0.01, SECONDS)
-
 
 
 def init():
@@ -913,7 +918,7 @@ def init():
     roller_motor.spin(FORWARD)
     roller_motor.set_velocity(0, PERCENT)
 
-    ### Wait for the gyro to settle, if it takes more then 10 seconds then close out of the loop
+    # Wait for the gyro to settle, if it takes more then 10 seconds then close out of the loop
     t = Timer()
 
     t.reset()
@@ -937,7 +942,6 @@ r = Robot(0, 0)
 r.use_gps(True)
 
 
-
 init()
 
 
@@ -955,7 +959,7 @@ driver_control()
 # TODO: use threads for auto mode to do multiple commands
 # TODO: make autonomous mode use self.update
 
-## * IMPORTANT
+# * IMPORTANT
 # TODO: test to see if threads die when they lose scope
 # TODO: Change these to numpy arrays
 # TODO: Figure out the sig figs of the inbuilt Timer class, if its good lets use it instead of time.time_ms

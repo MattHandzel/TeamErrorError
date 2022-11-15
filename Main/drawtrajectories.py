@@ -65,8 +65,6 @@ while not done:
       done = True
     
 
-  
-  
   # Update the screen
 
 # if there is no trajectory, exit
@@ -97,9 +95,11 @@ print("After:\t", len(current_trajectory))
 
 current_trajectory -= current_trajectory[0]
 
+nameOfTrajectory = input("Filename:\t")
 
+nameOfTrajectory = nameOfTrajectory if nameOfTrajectory != "" else f"{round(time.time())}_trajectory"
 
-with open(f"{round(time.time())}_trajectory.txt", "w") as f:
+with open(f"{nameOfTrajectory}.txt", "w") as f:
   for point in current_trajectory:
     f.write(
       '''{ 'x' : ''' + str(point[0]) + ''', 'y' : ''' + str(point[1]) + '''},'''
