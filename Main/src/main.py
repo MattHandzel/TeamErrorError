@@ -10,6 +10,7 @@ brain = Brain()
 
 # Robot configuration code
 controller_1 = Controller(PRIMARY)
+
 left_motor_a = Motor(Ports.PORT1, GearSetting.RATIO_18_1, False)
 left_motor_b = Motor(Ports.PORT6, GearSetting.RATIO_18_1, False)
 left_drive_smart = MotorGroup(left_motor_a, left_motor_b)
@@ -18,7 +19,10 @@ right_motor_b = Motor(Ports.PORT11, GearSetting.RATIO_18_1, True)
 right_drive_smart = MotorGroup(right_motor_a, right_motor_b)
 drivetrain = DriveTrain(
     left_drive_smart, right_drive_smart, 319.19, 295, 40, MM, 1)
-launching_motor = Motor(Ports.PORT7, GearSetting.RATIO_6_1, False)
+launching_motor_1 = Motor(Ports.PORT7, GearSetting.RATIO_6_1, False)
+launching_motor_2 = Motor(Ports.PORT10, GearSetting.RATIO_6_1, True)
+launching_motor = MotorGroup(launching_motor_1, launching_motor_2)
+
 led_a = Led(brain.three_wire_port.a)
 inertial = Inertial(Ports.PORT9)
 index_motor = Motor(Ports.PORT2, GearSetting.RATIO_18_1, False)
@@ -234,11 +238,14 @@ class Robot(GameObject):
         self.max_velocity = ((self.wheel_max_rpm / 60) *
                              math.pi * 2 * self.wheel_diameter_CM / math.sqrt(2))
         # This number in the divisor means it will speedup/slow down in that many seeconds
-        self.max_acceleration = 2 * self.max_velocity / 0.1
+        self.max_acceleration = 2 * self.max_velocity / 0.05
 
 ##### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ###
     def use_gps(self, value):
         self.using_gps = value
+    
+    def print_debug_info(self):
+        print("left_motor_a_position:", left_motor_a.position(DEGREES), "left_motor_b_position:", left_motor_b.position(DEGREES), "right_motor_a_position:", right_motor_a.position(DEGREES), "right_motor_b_position:", right_motor_b.position(DEGREES))
 
     def set_time_to_top_speed(self, _time):
         '''
@@ -285,7 +292,7 @@ class Robot(GameObject):
         '''
         Resets the theta of the robot to 0
         '''
-        self.theta = 0
+        self.total_theta = 0
 
     def stop_moving(self):
         '''
@@ -534,7 +541,7 @@ class Robot(GameObject):
         self.x_velocity = x_from_encoders / self.delta_time
         self.y_velocity = y_from_encoders / self.delta_time
 
-        self.angular_velocity = inertial.gyro_rate(ZAXIS)
+        self.angular_velocity = inertial.gyro_rate(ZAXIS, VelocityUnits.DPS)
         # is a magic number that makes the gyro work better (experimentall I found that when the gyro reported that it spun 1 time, it actually overshot by about 3 degrees)
         self.total_theta += self.angular_velocity * self.delta_time / 0.99375
         self.theta = self.total_theta - (self.total_theta // 360 * 360)
@@ -660,7 +667,7 @@ class Robot(GameObject):
         roller_motor.set_velocity(-100, PERCENT)
 
 ##### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ###
-    def drive(self, _x_vector, _y_vector, _r_vector, field_based_driving=False, constant_acceleration=True, square_input=True):
+    def drive(self, _x_vector, _y_vector, _r_vector, field_based_driving=False, constant_acceleration=True, square_input=True, slow_mode = False):
         '''
         Drives the robot.
         params - 
@@ -676,6 +683,7 @@ class Robot(GameObject):
         right_motor_a.spin(FORWARD)
         right_motor_b.spin(FORWARD)
 
+
         # Cool driving toggle (basically you rotate the target direction vector based on)
         # the robots heading (https://stackoverflow.com/questions/14607640/rotating-a-vector-in-3d-space)
         if field_based_driving:
@@ -689,11 +697,17 @@ class Robot(GameObject):
             y_vector = _y_vector
             r_vector = _r_vector
 
+
         # Square the input vectors and divide by 100 for better controls
         if square_input:
             x_vector = (x_vector ** 2) / 100 * sign(x_vector)
             y_vector = (y_vector ** 2) / 100 * sign(y_vector)
             r_vector = (r_vector ** 2) / 100 * sign(r_vector)
+
+        if slow_mode:
+            x_vector = x_vector / 4
+            y_vector = y_vector / 4
+            r_vector = r_vector / 4
 
         # HAVE DAVID TRY THIS OUT (sqrt the input might be better for da vid)
         # x_vector = (abs(_x_vector) ** (0.5)) * 10 * sign(_x_vector)
@@ -743,7 +757,7 @@ class Robot(GameObject):
             right_motor_b_target_velocity = clamp(right_motor_b_target_velocity, (max_acceleration_right_motor_b / self.max_velocity * 100) * self.delta_time + right_motor_b.velocity(
                 PERCENT), -(max_acceleration_right_motor_b / self.max_velocity * 100) * self.delta_time + right_motor_b.velocity(PERCENT))
 
-            # Accelerate the motors to the target velocity
+            # Accelerate the motors to the target velocity. 
             left_motor_a.set_velocity(left_motor_a_target_velocity, PERCENT)
             right_motor_a.set_velocity(right_motor_a_target_velocity, PERCENT)
             left_motor_b.set_velocity(left_motor_b_target_velocity, PERCENT)
@@ -846,20 +860,28 @@ def driver_control():
     timer = Timer()
     timer.reset()
 
+    reset_theta_timer = Timer()
+    reset_theta_timer.reset()
+
+
     while True:
         # Update the robot's information
         r.update()
 
         # Timer to print things out to the terminal every x seconds
-        if (timer.time() > 0.5 * 1000):
-            print("theta:", r.theta, "num_rotations:", (r.total_theta // 360) + 1,
-                  "anuglar_velocity", inertial.gyro_rate(ZAXIS), " time:", brain.timer.time() / 1000)
-
+        if (timer.time() > 0.1 * 1000):
+            # print(left_motor_a.velocity(RPM), right_motor_a.velocity(RPM), left_motor_b.velocity(RPM), right_motor_b.velocity(RPM))
+            # print(left_motor_a.power(), right_motor_a.power(), left_motor_b.power(), right_motor_b.power())
+                        
             timer.reset()
 
+        # launching_motor.set_velocity(controller_1.axis4.position(), PERCENT)
+        # launching_motor_1.set_velocity(-100, PERCENT)
+        # launching_motor_2.set_velocity(-100, PERCENT)
+        
         # robot axis are based on x, y, and r vectors
         r.drive(controller_1.axis4.position(), controller_1.axis3.position(),
-                controller_1.axis1.position(), True, True)
+                controller_1.axis1.position(), True, True, False, controller_1.buttonR2.pressing())
 
         # Run the intake subsystem, set the desired speed
         r.intake(controller_1.axis2.position())
@@ -875,6 +897,24 @@ def driver_control():
 
         if not (controller_1.buttonR2.pressing() or controller_1.buttonL2.pressing()):
             roller_motor.set_velocity(0, PERCENT)
+
+        if not controller_1.buttonX.pressing():
+            reset_theta_timer.reset()
+
+        # If someone has pressed button x for more than 1 second, reset the orientaiton
+        if reset_theta_timer.value() > 1:
+            print("Resetting the orientation of the robot!!")
+            r.reset_theta()
+            reset_theta_timer.reset()
+
+        
+        if controller_1.buttonB.pressing():
+            r.print_debug_info()
+
+        
+        
+            
+
 
         wait(0.01, SECONDS)
 
@@ -892,8 +932,8 @@ def init():
     left_motor_b.set_stopping(BRAKE)
     right_motor_b.set_stopping(BRAKE)
 
-    launching_motor.set_velocity(0, PERCENT)
-    launching_motor.spin(FORWARD)
+    launching_motor_1.spin(FORWARD)
+    launching_motor_2.spin(FORWARD)
 
     left_motor_a.set_velocity(0, PERCENT)
     right_motor_a.set_velocity(0, PERCENT)
@@ -918,12 +958,17 @@ def init():
     roller_motor.spin(FORWARD)
     roller_motor.set_velocity(0, PERCENT)
 
+    # Set the optical light power
+    roller_optical.set_light_power(100)
+    roller_optical.object_detect_threshold(100)
+
     # Wait for the gyro to settle, if it takes more then 10 seconds then close out of the loop
     t = Timer()
 
     t.reset()
     while inertial.gyro_rate(ZAXIS) != 0 and t.value() < 10:
         print("Waiting for gyro to init...")
+        wait(0.1, SECONDS)
 
 
 red_goal = GameObject(100, 100)
@@ -941,11 +986,11 @@ r = Robot(0, 0)
 
 r.use_gps(True)
 
-
 init()
+# gps.calibrate()
+# while True:
 
-
-autonomous()
+#     print("x:", gps.x_position(), "y:",gps.y_position(), "heading:", gps.heading(), "quality:", gps.quality())
 
 
 driver_control()
@@ -958,6 +1003,8 @@ driver_control()
 # TODO: make a "switch" that can make the robot use the gps for its current position or motor encoder values
 # TODO: use threads for auto mode to do multiple commands
 # TODO: make autonomous mode use self.update
+# TODO: Make a button that makes robot go slowly
+# TODO: Work with david and figure out how to make robot driving feel better (more responsive, smooth, etc.)
 
 # * IMPORTANT
 # TODO: test to see if threads die when they lose scope
