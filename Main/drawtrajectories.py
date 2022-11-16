@@ -103,5 +103,5 @@ nameOfTrajectory = nameOfTrajectory if nameOfTrajectory != "" else f"{round(time
 with open(f"{nameOfTrajectory}.txt", "w") as f:
   for point in current_trajectory:
     f.write(
-      '''{ 'x' : ''' + str(point[0]) + ''', 'y' : ''' + str(point[1]) + '''},'''
+      '''{ 'x' : ''' + str(round(point[0] * 100) / 100) + ''', 'y' : ''' + str(round(point[1] * 100) / 100) + '''},'''
     )

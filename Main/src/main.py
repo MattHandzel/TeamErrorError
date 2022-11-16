@@ -779,7 +779,7 @@ class Robot(GameObject):
             # Alpha controls how responsigve the driving is, higher alpha means more reponsibe
             alpha = 0.4
 
-            if abs(_x_vector) < 3 and abs(_y_vector) < 3 and abs(_r_vector) < 3:
+            if abs(x_vector) < 3 and abs(y_vector) < 3 and abs(r_vector) < 3:
                 alpha = 0.8
 
             left_motor_a_target_velocity = left_motor_a.velocity(
@@ -1004,8 +1004,8 @@ init()
 
 #     print("x:", gps.x_position(), "y:",gps.y_position(), "heading:", gps.heading(), "quality:", gps.quality())
 
-autonomous()
-# driver_control()
+# autonomous()
+driver_control()
 
 # competition = Competition(driver_control, autonomous)
 
