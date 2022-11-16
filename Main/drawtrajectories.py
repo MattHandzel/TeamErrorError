@@ -93,6 +93,7 @@ for i, point in enumerate(copy_of_trajectory):
 
 print("After:\t", len(current_trajectory))
 
+
 current_trajectory -= current_trajectory[0]
 
 nameOfTrajectory = input("Filename:\t")

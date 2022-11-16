@@ -70,6 +70,16 @@ def clamp(num, _max, _min):
     return max(min(num, _max), _min)
 
 
+def rotate_vector_2d(x, y, theta):
+    '''
+    Rotates a vector by theta degrees
+    '''
+    x_old = x
+    x = x * math.cos(theta) - y * math.sin(theta)
+    y = x_old * math.sin(theta) + y * math.cos(theta)
+
+    return x,y 
+
 class Vector:
     '''
     Vector class I wrote because basic python lists are lame
@@ -223,6 +233,9 @@ class Robot(GameObject):
     left_motor_b_PID = PID(motor_PID_kP,motor_PID_kI,motor_PID_kD)
     right_motor_b_PID = PID(motor_PID_kP,motor_PID_kI,motor_PID_kD)
 
+    previous_x_from_encoders = 0
+    previous_y_from_encoders = 0
+
     def __init__(self, x_pos=0, y_pos=0, theta=0):
         '''
         Initializes the robot class, computes the max velocity and acceleration
@@ -324,7 +337,8 @@ class Robot(GameObject):
     def get_position(self):
         if self.using_gps:
             return gps.x_position(DistanceUnits.CM), gps.y_position(DistanceUnits.CM)
-        return self.get_position_from_encoders()
+        return self.x_pos, self.y_pos
+        # return self.get_position_from_encoders()
 
     # Target position in cm
     def go_to_position(self, _target_x, _target_y, _pid=False, _pidDistanceThreshold=1):
@@ -363,10 +377,12 @@ class Robot(GameObject):
                     # If theta_to_target is less than 0, then add 180 degrees
                     theta_to_target += math.pi * (error_x < 0)
 
-                self.drive(math.cos(theta_to_target) * 50, math.sin(theta_to_target)
-                           * 50, 0, field_based_driving=True, square_input=False)
+                print(x_pos, y_pos, theta_to_target * RAD_TO_DEG)
 
-            print("Done!")
+                self.drive(math.cos(theta_to_target) * 20, math.sin(theta_to_target)
+                           * 20, 0, field_based_driving=True, square_input=False)
+                wait(0.1, SECONDS)
+            print("Done!") 
 
         else:
             left_motor_a_target_position = delta_x * self.wheel_distance_CM_to_DEG_coefficient * \
@@ -418,13 +434,13 @@ class Robot(GameObject):
             
             print("Exiting PID loop...")
 
-    def forever_update(self, _delat=0.01):
+    def forever_update(self, _delay=0.01):
         '''
         This is used in a Thread() so that we run the update function constantly (because its very freaking important)
         '''
         while True:
             self.update()
-            wait(_delat, SECONDS)
+            wait(_delay, SECONDS)
 
     def run_autonomous(self, procedure):
         '''
@@ -530,26 +546,30 @@ class Robot(GameObject):
             return
         # Check to see if the robot has moved AT ALL
 
-        # TODO: Make change these to numpy arrays
-        delta_encoders = (self.get_current_wheel_encoder_values(
-        ) - self.previous_wheel_encoder_values)
-
-        # Use encoders to get our x and y positions so that we can take the derivative and get our velocity
-        x_from_encoders, y_from_encoders = self.get_position_from_encoders()
-
-        # Get the velocity of the robot in deg/s for 4 wheels
-        self.x_velocity = x_from_encoders / self.delta_time
-        self.y_velocity = y_from_encoders / self.delta_time
-
         self.angular_velocity = inertial.gyro_rate(ZAXIS, VelocityUnits.DPS)
         # is a magic number that makes the gyro work better (experimentall I found that when the gyro reported that it spun 1 time, it actually overshot by about 3 degrees)
         self.total_theta += self.angular_velocity * self.delta_time / 0.99375
         self.theta = self.total_theta - (self.total_theta // 360 * 360)
+        
+        
+        # Use encoders to get our x and y positions so that we can take the derivative and get our velocity
+        self.x_from_encoders, self.y_from_encoders = self.get_position_from_encoders()
+
+        # Get the velocity of the robot in deg/s for 4 wheels
+        self.x_velocity = (self.x_from_encoders - self.previous_x_from_encoders) / self.delta_time
+        self.y_velocity = (self.y_from_encoders - self.previous_y_from_encoders) / self.delta_time
+
+        self.x_velocity, self.y_velocity = rotate_vector_2d(self.x_velocity, self.y_velocity, -self.theta * DEG_TO_RAD)
+
+        self.x_pos += self.x_velocity * self.delta_time
+        self.y_pos += self.y_velocity * self.delta_time
 
         self.previous_wheel_encoder_values = self.get_current_wheel_encoder_values()
         self.previous_theta = self.theta
 
         self.previous_update_time = getattr(time, "ticks_ms")() / 1000
+        self.previous_x_from_encoders = self.x_from_encoders
+        self.previous_y_from_encoders = self.y_from_encoders
 
     def get_current_wheel_encoder_values(self):
         '''
@@ -667,7 +687,7 @@ class Robot(GameObject):
         roller_motor.set_velocity(-100, PERCENT)
 
 ##### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ###
-    def drive(self, _x_vector, _y_vector, _r_vector, field_based_driving=False, constant_acceleration=True, square_input=True, slow_mode = False):
+    def drive(self, x_vector, y_vector, r_vector, field_based_driving=False, constant_acceleration=True, square_input=True, slow_mode = False):
         '''
         Drives the robot.
         params - 
@@ -687,15 +707,7 @@ class Robot(GameObject):
         # Cool driving toggle (basically you rotate the target direction vector based on)
         # the robots heading (https://stackoverflow.com/questions/14607640/rotating-a-vector-in-3d-space)
         if field_based_driving:
-            x_vector = cos(self.theta * DEG_TO_RAD) * _x_vector - \
-                sin(self.theta * DEG_TO_RAD) * _y_vector
-            y_vector = cos(self.theta * DEG_TO_RAD) * _y_vector + \
-                sin(self.theta * DEG_TO_RAD) * _x_vector
-            r_vector = _r_vector
-        else:
-            x_vector = _x_vector
-            y_vector = _y_vector
-            r_vector = _r_vector
+            x_vector, y_vector = rotate_vector_2d(x_vector, y_vector, self.theta * DEG_TO_RAD)
 
 
         # Square the input vectors and divide by 100 for better controls
@@ -812,7 +824,8 @@ class Robot(GameObject):
 
 ########## PATHS ########## PATHS ########## PATHS ########## PATHS ########## PATHS ########## PATHS ##########
 
-
+simple_path = [{ 'x' : 0.0, 'y' : 0.0},{ 'x' : 0.0, 'y' : 1.254751286449391},{ 'x' : 0.0, 'y' : 3.1368782161234776},{ 'x' : 0.0, 'y' : 5.64638078902226},{ 'x' : 0.0, 'y' : 8.783259005145766},{ 'x' : 0.0, 'y' : 11.292761578044576},{ 'x' : -0.6273756432246955, 'y' : 15.057015437392778},{ 'x' : -0.6273756432246955, 'y' : 18.82126929674098},{ 'x' : -0.6273756432246955, 'y' : 23.212898799313876},{ 'x' : 0.0, 'y' : 26.977152658662078},{ 'x' : 0.0, 'y' : 28.23190394511147},{ 'x' : 0.0, 'y' : 31.99615780445967},{ 'x' : 0.0, 'y' : 35.76041166380787},{ 'x' : 0.0, 'y' : 40.15204116638077},{ 'x' : 0.0, 'y' : 44.543670668953666},{ 'x' : 0.627375643224724, 'y' : 47.05317324185248},{ 'x' : 0.627375643224724, 'y' : 50.81742710120065},{ 'x' : 1.2547512864494195, 'y' : 55.20905660377355},{ 'x' : 1.2547512864494195, 'y' : 58.97331046312175},{ 'x' : 1.2547512864494195, 'y' : 62.110188679245255},{ 'x' : 1.2547512864494195, 'y' : 66.50181818181815},{ 'x' : 1.882126929674115, 'y' : 70.26607204116635},{ 'x' : 1.882126929674115, 'y' : 74.65770154373925},{ 'x' : 1.882126929674115, 'y' : 78.42195540308745},{ 'x' : 1.882126929674115, 'y' : 82.18620926243565},{ 'x' : 2.5095025728988105, 'y' : 85.32308747855916},{ 'x' : 2.5095025728988105, 'y' : 89.08734133790736},{ 'x' : 3.7642538593482016, 'y' : 92.85159519725556},{ 'x' : 4.391629502572897, 'y' : 95.98847341337904},{ 'x' : 5.019005145797621, 'y' : 99.12535162950255},{ 'x' : 5.6463807890223165, 'y' : 101.63485420240136},{ 'x' : 6.273756432247012, 'y' : 104.14435677530014},{ 'x' : 6.901132075471708, 'y' : 107.28123499142364},{ 'x' : 8.155883361921099, 'y' : 109.16336192109776},{ 'x' : 10.038010291595214, 'y' : 111.04548885077185},{ 'x' : 11.292761578044605, 'y' : 112.92761578044596},{ 'x' : 12.547512864493996, 'y' : 114.18236706689535},{ 'x' : 14.42963979416811, 'y' : 116.06449399656944},{ 'x' : 16.311766723842197, 'y' : 117.31924528301886},{ 'x' : 18.193893653516312, 'y' : 117.94662092624355},{ 'x' : 20.0760205831904, 'y' : 119.20137221269295},{ 'x' : 21.33077186963982, 'y' : 119.20137221269295},{ 'x' : 23.8402744425386, 'y' : 119.82874785591764},{ 'x' : 25.722401372212715, 'y' : 119.82874785591764},{ 'x' : 27.604528301886802, 'y' : 119.82874785591764},{ 'x' : 29.486655231560917, 'y' : 119.82874785591764},{ 'x' : 31.368782161235004, 'y' : 119.82874785591764},{ 'x' : 33.25090909090909, 'y' : 119.20137221269295},{ 'x' : 34.50566037735851, 'y' : 118.57399656946825},{ 'x' : 35.7604116638079, 'y' : 117.94662092624355},{ 'x' : 37.01516295025729, 'y' : 117.31924528301886},{ 'x' : 38.89728987993141, 'y' : 116.06449399656944},{ 'x' : 39.5246655231561, 'y' : 114.18236706689535},{ 'x' : 40.1520411663808, 'y' : 112.30024013722124},{ 'x' : 41.40679245283019, 'y' : 109.79073756432246},{ 'x' : 42.03416809605491, 'y' : 107.28123499142364},{ 'x' : 42.66154373927961, 'y' : 104.77173241852486},{ 'x' : 43.288919382504304, 'y' : 101.63485420240136},{ 'x' : 43.916295025729, 'y' : 99.12535162950255},{ 'x' : 44.543670668953695, 'y' : 95.98847341337904},{ 'x' : 45.17104631217839, 'y' : 91.59684391080614},{ 'x' : 45.17104631217839, 'y' : 88.45996569468267},{ 'x' : 45.17104631217839, 'y' : 85.32308747855916},{ 'x' : 45.17104631217839, 'y' : 81.55883361921096},{ 'x' : 45.17104631217839, 'y' : 78.42195540308745},{ 'x' : 45.17104631217839, 'y' : 73.40295025728986},{ 'x' : 44.543670668953695, 'y' : 70.26607204116635},{ 'x' : 44.543670668953695, 'y' : 66.50181818181815},{ 'x' : 44.543670668953695, 'y' : 63.99231560891937},{ 'x' : 44.543670668953695, 'y' : 60.855437392795864},{ 'x' : 43.916295025729, 'y' : 58.34593481989705},{ 'x' : 43.916295025729, 'y' : 54.58168096054885},{ 'x' : 43.916295025729, 'y' : 52.07217838765007},{ 'x' : 43.288919382504304, 'y' : 49.56267581475126},{ 'x' : 43.916295025729, 'y' : 47.05317324185248},{ 'x' : 43.916295025729, 'y' : 45.17104631217836},{ 'x' : 43.916295025729, 'y' : 43.288919382504275},{ 'x' : 43.288919382504304, 'y' : 41.40679245283016},{ 'x' : 43.288919382504304, 'y' : 38.89728987993138},{ 'x' : 43.288919382504304, 'y' : 37.01516295025726},{ 'x' : 43.288919382504304, 'y' : 34.50566037735845},{ 'x' : 43.288919382504304, 'y' : 32.623533447684366},{ 'x' : 42.66154373927961, 'y' : 30.74140651801028},{ 'x' : 42.66154373927961, 'y' : 29.48665523156086},{ 'x' : 43.288919382504304, 'y' : 26.977152658662078},{ 'x' : 43.288919382504304, 'y' : 25.72240137221266},{ 'x' : 43.288919382504304, 'y' : 23.840274442538572},{ 'x' : 43.288919382504304, 'y' : 22.58552315608918},{ 'x' : 43.288919382504304, 'y' : 21.33077186963976},{ 'x' : 43.288919382504304, 'y' : 20.07602058319037},{ 'x' : 43.288919382504304, 'y' : 18.82126929674098},{ 'x' : 43.288919382504304, 'y' : 17.56651801029156},{ 'x' : 43.288919382504304, 'y' : 15.057015437392778},{ 'x' : 43.916295025729, 'y' : 13.174888507718663},{ 'x' : 43.916295025729, 'y' : 11.920137221269272},{ 'x' : 44.543670668953695, 'y' : 10.66538593481988},{ 'x' : 45.17104631217839, 'y' : 9.410634648370461},{ 'x' : 46.42579759862781, 'y' : 7.528507718696375},{ 'x' : 48.307924528301896, 'y' : 6.901132075471679},{ 'x' : 49.56267581475129, 'y' : 6.273756432246984},{ 'x' : 51.4448027444254, 'y' : 5.64638078902226},{ 'x' : 53.954305317324184, 'y' : 5.019005145797564},{ 'x' : 55.209056603773604, 'y' : 5.019005145797564},{ 'x' : 57.09118353344769, 'y' : 5.019005145797564},{ 'x' : 58.973310463121805, 'y' : 5.64638078902226},{ 'x' : 60.2280617495712, 'y' : 5.64638078902226},{ 'x' : 62.73756432247001, 'y' : 6.901132075471679},{ 'x' : 63.9923156089194, 'y' : 8.15588336192107},{ 'x' : 65.87444253859348, 'y' : 9.410634648370461},{ 'x' : 68.3839451114923, 'y' : 11.920137221269272},{ 'x' : 69.63869639794169, 'y' : 14.429639794168082},{ 'x' : 70.8934476843911, 'y' : 16.939142367066864},{ 'x' : 72.1481989708405, 'y' : 20.07602058319037},{ 'x' : 73.40295025728989, 'y' : 23.212898799313876},{ 'x' : 74.03032590051458, 'y' : 26.349777015437354},{ 'x' : 74.65770154373931, 'y' : 30.114030874785556},{ 'x' : 75.285077186964, 'y' : 33.87828473413376},{ 'x' : 75.9124528301887, 'y' : 38.269914236706654},{ 'x' : 76.5398284734134, 'y' : 41.40679245283016},{ 'x' : 77.16720411663809, 'y' : 45.79842195540306},{ 'x' : 77.16720411663809, 'y' : 49.56267581475126},{ 'x' : 77.79457975986278, 'y' : 53.954305317324156},{ 'x' : 78.42195540308748, 'y' : 57.71855917667236},{ 'x' : 78.42195540308748, 'y' : 60.855437392795864},{ 'x' : 79.0493310463122, 'y' : 64.61969125214407},{ 'x' : 79.0493310463122, 'y' : 67.75656946826757},{ 'x' : 79.0493310463122, 'y' : 70.26607204116635},{ 'x' : 79.0493310463122, 'y' : 72.77557461406516},{ 'x' : 78.42195540308748, 'y' : 75.91245283018867},{ 'x' : 78.42195540308748, 'y' : 79.04933104631215},{ 'x' : 78.42195540308748, 'y' : 81.55883361921096},{ 'x' : 77.79457975986278, 'y' : 84.06833619210974},{ 'x' : 77.79457975986278, 'y' : 86.57783876500855},{ 'x' : 78.42195540308748, 'y' : 89.08734133790736},{ 'x' : 78.42195540308748, 'y' : 90.34209262435675},{ 'x' : 78.42195540308748, 'y' : 92.85159519725556},{ 'x' : 79.0493310463122, 'y' : 95.36109777015434},{ 'x' : 79.0493310463122, 'y' : 97.87060034305316},{ 'x' : 79.0493310463122, 'y' : 99.75272727272724},{ 'x' : 79.0493310463122, 'y' : 101.63485420240136},{ 'x' : 79.6767066895369, 'y' : 102.88960548885075},{ 'x' : 79.6767066895369, 'y' : 105.39910806174956},{ 'x' : 79.6767066895369, 'y' : 107.28123499142364},{ 'x' : 79.6767066895369, 'y' : 109.16336192109776},{ 'x' : 80.3040823327616, 'y' : 111.04548885077185},{ 'x' : 80.3040823327616, 'y' : 112.30024013722124},{ 'x' : 80.93145797598629, 'y' : 114.18236706689535},{ 'x' : 81.55883361921099, 'y' : 116.06449399656944},{ 'x' : 82.18620926243568, 'y' : 117.31924528301886},{ 'x' : 83.4409605488851, 'y' : 118.57399656946825},{ 'x' : 84.69571183533449, 'y' : 119.82874785591764},{ 'x' : 86.57783876500858, 'y' : 120.45612349914234},{ 'x' : 88.4599656946827, 'y' : 121.08349914236703},{ 'x' : 90.34209262435678, 'y' : 121.08349914236703},{ 'x' : 92.85159519725559, 'y' : 121.71087478559176},{ 'x' : 95.3610977701544, 'y' : 121.71087478559176},{ 'x' : 99.12535162950257, 'y' : 121.08349914236703},{ 'x' : 101.63485420240139, 'y' : 120.45612349914234},{ 'x' : 104.1443567753002, 'y' : 120.45612349914234},{ 'x' : 107.28123499142367, 'y' : 119.20137221269295},{ 'x' : 109.79073756432248, 'y' : 118.57399656946825},{ 'x' : 112.3002401372213, 'y' : 117.31924528301886},{ 'x' : 114.18236706689538, 'y' : 116.06449399656944},{ 'x' : 115.43711835334477, 'y' : 114.80974271012005},{ 'x' : 116.69186963979419, 'y' : 113.55499142367066},{ 'x' : 119.20137221269297, 'y' : 110.41811320754715},{ 'x' : 120.4561234991424, 'y' : 107.90861063464834},{ 'x' : 121.08349914236709, 'y' : 105.39910806174956},{ 'x' : 121.08349914236709, 'y' : 102.26222984562605},{ 'x' : 121.71087478559178, 'y' : 98.49797598627785},{ 'x' : 121.71087478559178, 'y' : 96.61584905660376},{ 'x' : 122.33825042881648, 'y' : 92.22421955403084},{ 'x' : 122.33825042881648, 'y' : 88.45996569468267},{ 'x' : 121.71087478559178, 'y' : 85.32308747855916},{ 'x' : 121.71087478559178, 'y' : 81.55883361921096},{ 'x' : 121.71087478559178, 'y' : 78.42195540308745},{ 'x' : 121.08349914236709, 'y' : 73.40295025728986},{ 'x' : 121.08349914236709, 'y' : 69.63869639794166},{ 'x' : 121.08349914236709, 'y' : 65.87444253859346},{ 'x' : 121.08349914236709, 'y' : 61.48281303602056},{ 'x' : 120.4561234991424, 'y' : 56.46380789022297},{ 'x' : 120.4561234991424, 'y' : 52.699554030874765},{ 'x' : 120.4561234991424, 'y' : 48.93530017152656},{ 'x' : 120.4561234991424, 'y' : 45.17104631217836},{ 'x' : 120.4561234991424, 'y' : 41.40679245283016},{ 'x' : 120.4561234991424, 'y' : 37.64253859348196},{ 'x' : 120.4561234991424, 'y' : 33.87828473413376},{ 'x' : 120.4561234991424, 'y' : 31.368782161234975},{ 'x' : 120.4561234991424, 'y' : 28.859279588336165},{ 'x' : 120.4561234991424, 'y' : 26.349777015437354},{ 'x' : 120.4561234991424, 'y' : 23.840274442538572},{ 'x' : 120.4561234991424, 'y' : 21.958147512864457},{ 'x' : 120.4561234991424, 'y' : 20.703396226415066},{ 'x' : 120.4561234991424, 'y' : 19.448644939965675},{ 'x' : 120.4561234991424, 'y' : 18.193893653516284},{ 'x' : 120.4561234991424, 'y' : 16.939142367066864},{ 'x' : 120.4561234991424, 'y' : 15.684391080617473},{ 'x' : 120.4561234991424, 'y' : 14.429639794168082},{ 'x' : 120.4561234991424, 'y' : 13.174888507718663},{ 'x' : 120.4561234991424, 'y' : 11.920137221269272},{ 'x' : 119.82874785591767, 'y' : 10.66538593481988},{ 'x' : 118.57399656946828, 'y' : 10.66538593481988},{ 'x' : 116.69186963979419, 'y' : 9.410634648370461},{ 'x' : 114.80974271012008, 'y' : 8.783259005145766},{ 'x' : 112.3002401372213, 'y' : 8.15588336192107},{ 'x' : 109.16336192109779, 'y' : 6.901132075471679},{ 'x' : 106.02648370497428, 'y' : 6.901132075471679},{ 'x' : 102.26222984562608, 'y' : 5.64638078902226},{ 'x' : 97.87060034305318, 'y' : 5.019005145797564},{ 'x' : 92.85159519725559, 'y' : 4.391629502572869},{ 'x' : 87.2052144082333, 'y' : 3.1368782161234776},{ 'x' : 82.18620926243568, 'y' : 3.1368782161234776},{ 'x' : 75.9124528301887, 'y' : 1.8821269296740866},{ 'x' : 70.26607204116638, 'y' : 1.254751286449391},{ 'x' : 64.6196912521441, 'y' : 1.254751286449391},{ 'x' : 58.34593481989711, 'y' : 0.6273756432246955},{ 'x' : 53.32692967409949, 'y' : 0.6273756432246955},{ 'x' : 48.307924528301896, 'y' : 0.6273756432246955},{ 'x' : 42.66154373927961, 'y' : 0.6273756432246955},{ 'x' : 37.01516295025729, 'y' : 0.6273756432246955},{ 'x' : 31.9961578044597, 'y' : 0.6273756432246955},{ 'x' : 29.486655231560917, 'y' : 0.6273756432246955},{ 'x' : 25.09502572898799, 'y' : 0.0},{ 'x' : 21.33077186963982, 'y' : 0.6273756432246955},{ 'x' : 16.939142367066893, 'y' : 0.6273756432246955},{ 'x' : 15.057015437392806, 'y' : 0.6273756432246955},{ 'x' : 11.9201372212693, 'y' : 0.6273756432246955},{ 'x' : 8.783259005145823, 'y' : 0.6273756432246955},{ 'x' : 5.6463807890223165, 'y' : 0.6273756432246955},{ 'x' : 3.136878216123506, 'y' : 0.0},{ 'x' : 1.882126929674115, 'y' : 0.0},]
+straight_line = [{ 'x' : 0.0, 'y' : 0.0},{ 'x' : -0.6273756432246955, 'y' : 8.155883361921099},{ 'x' : -0.6273756432246955, 'y' : 15.057015437392778},{ 'x' : -1.2547512864494053, 'y' : 25.09502572898799},{ 'x' : -1.8821269296741008, 'y' : 36.38778730703257},{ 'x' : -3.136878216123506, 'y' : 46.42579759862778},{ 'x' : -3.136878216123506, 'y' : 55.209056603773575},{ 'x' : -3.7642538593482016, 'y' : 62.73756432246998},{ 'x' : -3.7642538593482016, 'y' : 69.01132075471696},{ 'x' : -3.136878216123506, 'y' : 73.40295025728986},]
 # END OF PATHS ######### END OF PATHS ######### END OF PATHS ######### END OF PATHS ######### END OF PATHS
 
 
@@ -841,7 +854,7 @@ def get_angle_to_object(gameobject_1, gameobject_2):
 
 def autonomous():
     # init() # Init a second time (Hopefully to fix the problem with the motors breaking for some reason)
-    r.run_autonomous({})
+    r.run_autonomous(simple_path)
     r.stop_moving()
 
 
@@ -870,9 +883,8 @@ def driver_control():
 
         # Timer to print things out to the terminal every x seconds
         if (timer.time() > 0.1 * 1000):
-            # print(left_motor_a.velocity(RPM), right_motor_a.velocity(RPM), left_motor_b.velocity(RPM), right_motor_b.velocity(RPM))
-            # print(left_motor_a.power(), right_motor_a.power(), left_motor_b.power(), right_motor_b.power())
-                        
+            print("pos", r.x_pos, r.y_pos, "vel",r.x_velocity, r.y_velocity)
+
             timer.reset()
 
         # launching_motor.set_velocity(controller_1.axis4.position(), PERCENT)
@@ -959,7 +971,7 @@ def init():
     roller_motor.set_velocity(0, PERCENT)
 
     # Set the optical light power
-    roller_optical.set_light_power(100)
+    roller_optical.set_light_power(0)
     roller_optical.object_detect_threshold(100)
 
     # Wait for the gyro to settle, if it takes more then 10 seconds then close out of the loop
@@ -984,7 +996,7 @@ field_length = 356  # CM
 
 r = Robot(0, 0)
 
-r.use_gps(True)
+r.use_gps(False)
 
 init()
 # gps.calibrate()
@@ -992,14 +1004,15 @@ init()
 
 #     print("x:", gps.x_position(), "y:",gps.y_position(), "heading:", gps.heading(), "quality:", gps.quality())
 
-
-driver_control()
+autonomous()
+# driver_control()
 
 # competition = Competition(driver_control, autonomous)
 
 
 ##! PRIORITY
 # TODO: Use the gps and figure out how precise it is
+# TODO: Figure out why 1 wheel is moving MUCH faster then the other wheels
 # TODO: make a "switch" that can make the robot use the gps for its current position or motor encoder values
 # TODO: use threads for auto mode to do multiple commands
 # TODO: make autonomous mode use self.update
