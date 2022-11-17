@@ -236,6 +236,13 @@ class Robot(GameObject):
     previous_x_from_encoders = 0
     previous_y_from_encoders = 0
 
+    # used to keep track of time in auto and driver mode respectively, use it for nicely logging data, can be used during either modes for end game/pathfinding rules
+    autonomous_timer = Timer()
+    driver_controlled_timer = Timer()
+
+    previous_x_from_gps = 0
+    previous_y_from_gps = 0
+
     def __init__(self, x_pos=0, y_pos=0, theta=0):
         '''
         Initializes the robot class, computes the max velocity and acceleration
@@ -281,11 +288,7 @@ class Robot(GameObject):
         Function returns true if the values of the encoders for the motors have
         changed AT ALL
         '''
-        new_sum_of_encoders = abs(left_motor_a.position(DEGREES)) + abs(right_motor_a.position(
-            DEGREES)) + abs(left_motor_b.position(DEGREES)) + abs(right_motor_b.position(DEGREES))
-        has_moved_boolean = new_sum_of_encoders != self.previous_sum_of_wheel_encoders
-        self.previous_sum_of_wheel_encoders = new_sum_of_encoders
-        return has_moved_boolean
+        return self.x_velocity == 0 and self.y_velocity == 0
 
     def set_team(self, _color):
         '''
@@ -316,9 +319,49 @@ class Robot(GameObject):
         right_motor_a.stop()
         right_motor_b.stop()
 
+    def print(self, message):
+        '''
+        Prints a message on the screen and into the console with the current time and mode we're using
+        '''
+        message = f" ({(self.autonomous_timer.time() / 1000):.2f}): {message}"
+        if self.autonomous_timer.value() <= 15:
+            message = "AUTO" + message
+        elif self.driver_controlled_timer.value() < 105:
+            message = "DRIVER" + message
+        print(message)
+        brain.screen.print(message)
+
+
+
 
 ##### AUTO ### AUTO ### AUTO ### AUTO ### AUTO ### AUTO ### AUTO ### AUTO ### AUTO ### AUTO ###
+    def turn_to_roller(self):
+        '''
+        Turns the robot to the roller, will NOT turn to roller if not in the right quadrant
+        '''
 
+        # Compute the angle to the roller based on the robot's current position and what "quadrant" it is in
+        x_pos, y_pos = self.get_position()
+        roller_angle: float = -1
+        if x_pos > 0 and y_pos > 0:
+            roller_angle = 180
+            # We are in quadrant #1
+            if abs(x_pos) < abs(y_pos):
+                roller_angle += 90
+
+        if x_pos < 0 and y_pos < 0:
+            # We are in quadrant #3
+            roller_angle = 0
+
+            if abs(x_pos) > abs(y_pos):
+                roller_angle = 90
+        
+        if roller_angle == -1:
+            self.print("Not in a proper quadrant...")
+            return
+
+        Thread(self.turn_to_heading,(roller_angle,))
+        
 
     def get_position_from_encoders(self):
         '''
@@ -335,8 +378,6 @@ class Robot(GameObject):
         return x_value, y_value
 
     def get_position(self):
-        if self.using_gps:
-            return gps.x_position(DistanceUnits.CM), gps.y_position(DistanceUnits.CM)
         return self.x_pos, self.y_pos
         # return self.get_position_from_encoders()
 
@@ -465,6 +506,8 @@ class Robot(GameObject):
         t = Thread(self.forever_update)
         self.update()
 
+        self.autonomous_timer.reset()
+
         for step in procedure:
             if "setX" in step:
                 self.x_pos = step["setX"]
@@ -506,6 +549,8 @@ class Robot(GameObject):
 
         # Another way to approach this is to use a PID-esque loop where we check our current heading
         # at each timestep and drive the robot at a specific velocity until the desired heading is reached
+
+        self.print(f"Turning to heading {_heading}")
 
         pass
 
@@ -555,14 +600,36 @@ class Robot(GameObject):
         # Use encoders to get our x and y positions so that we can take the derivative and get our velocity
         self.x_from_encoders, self.y_from_encoders = self.get_position_from_encoders()
 
+        delta_x_from_encoders = self.x_from_encoders - self.previous_x_from_encoders
+        delta_y_from_encoders = self.y_from_encoders - self.previous_y_from_encoders 
+
+        delta_x_from_encoders, delta_y_from_encoders = rotate_vector_2d(delta_x_from_encoders, delta_y_from_encoders, -self.theta * DEG_TO_RAD)
+
         # Get the velocity of the robot in deg/s for 4 wheels
-        self.x_velocity = (self.x_from_encoders - self.previous_x_from_encoders) / self.delta_time
-        self.y_velocity = (self.y_from_encoders - self.previous_y_from_encoders) / self.delta_time
+        self.x_velocity = delta_x_from_encoders / self.delta_time
+        self.y_velocity = delta_y_from_encoders / self.delta_time
 
-        self.x_velocity, self.y_velocity = rotate_vector_2d(self.x_velocity, self.y_velocity, -self.theta * DEG_TO_RAD)
+        # Velocity of robot from gps perspective
+        x_from_gps = 0
+        y_from_gps = 0
+        alpha = 0
+        
+        if self.using_gps and gps.quality() >= 100: 
+            # Update alpha to value that uses gps
+            alpha = 0.1
+            x_from_gps = gps.x_position(DistanceUnits.CM)
+            y_from_gps = gps.y_position(DistanceUnits.CM)
 
-        self.x_pos += self.x_velocity * self.delta_time
-        self.y_pos += self.y_velocity * self.delta_time
+            delta_x_from_gps = gps.x_position(DistanceUnits.CM) - self.previous_x_from_gps 
+            delta_y_from_gps = gps.y_position(DistanceUnits.CM) - self.previous_y_from_gps 
+
+            self.previous_x_from_gps = gps.x_position(DistanceUnits.CM)
+            self.previous_y_from_gps = gps.y_position(DistanceUnits.CM)
+
+        # If we have not moved (from the encoders point of view), and the gps is not changing that much, then use the rolling average from the gps
+        # If gps is enabled then the low and high pass filter will make the x and y position more stable, if gps is not enabled then the formula won't use gps data (alpha would equal 0)
+        self.x_pos += delta_x_from_encoders * (1-alpha) + (self.x_pos - x_from_gps) * alpha
+        self.y_pos += delta_y_from_encoders * (1-alpha) + (self.y_pos - y_from_gps) * alpha
 
         self.previous_wheel_encoder_values = self.get_current_wheel_encoder_values()
         self.previous_theta = self.theta
@@ -570,6 +637,7 @@ class Robot(GameObject):
         self.previous_update_time = getattr(time, "ticks_ms")() / 1000
         self.previous_x_from_encoders = self.x_from_encoders
         self.previous_y_from_encoders = self.y_from_encoders
+
 
     def get_current_wheel_encoder_values(self):
         '''
@@ -877,6 +945,8 @@ def driver_control():
     reset_theta_timer = Timer()
     reset_theta_timer.reset()
 
+    r.driver_controlled_timer.reset()
+
 
     while True:
         # Update the robot's information
@@ -998,7 +1068,7 @@ field_length = 356  # CM
 
 r = Robot(0, 0)
 
-r.use_gps(False)
+r.use_gps(gps.installed())
 
 init()
 gps.calibrate()
@@ -1019,10 +1089,12 @@ driver_control()
 # TODO: Make a button that makes robot go slowly
 # TODO: Work with david and figure out how to make robot driving feel better (more responsive, smooth, etc.)
 # TODO: use low and high pass filter for position
-
-
+# TODO: Revamp the driving command to work with go_to_position and inputting position and rotation vectors 
+# TODO: test low pass and high pass filter
 
 # * IMPORTANT
+# TODO: Test out the cool Robot.print command and see if it prints on brain and console and how well it does so
+# TODO: Make a spin to command
 # TODO: test to see if threads die when they lose scope
 # TODO: Change these to numpy arrays
 # TODO: Figure out the sig figs of the inbuilt Timer class, if its good lets use it instead of time.time_ms
