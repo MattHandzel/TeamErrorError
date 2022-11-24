@@ -5,6 +5,7 @@ import time
 from vex import *
 import random
 import vex
+import sys
 
 # Brain should be defined by default
 brain = Brain()
@@ -52,7 +53,13 @@ r2o2 = math.sqrt(2) / 2
 # wait for rotation sensor to fully initialize
 wait(30, MSEC)
 
-
+def f(*args):
+    message = ""
+    for arg in args:
+        if type(arg) != str:
+            arg = str(arg)
+        message += " " + arg
+    return message
 
 def sign(num):
     '''
@@ -215,10 +222,7 @@ class Robot(GameObject):
     max_velocity: float
     max_acceleration: float
 
-    previous_theta = 0
     total_theta = 0
-
-    using_gps = False
 
     # PID controller constants
     motor_PID_kP = 10
@@ -255,17 +259,18 @@ class Robot(GameObject):
     total_x_from_encoders = 0
     total_y_from_encoders = 0
 
-    is_shooting = False
-
     flywheel_motor_1_PID = PID(2, 0, 0)
     flywheel_motor_2_PID = PID(2, 0, 0)
 
     flywheel_speed = 0
 
+    delta_time: float = 0
+
     # State dictionary will hold ALL information about the robot
     '''
     '''
     state = {
+        # Orientation
         "x_pos" : 0,
         "y_pos" : 0,
         "x_vel" : 0,
@@ -274,14 +279,22 @@ class Robot(GameObject):
         "y_gps" : 0,
         "x_enc" : 0,
         "y_enc" : 0,
-        "using_gps" : False,
         "theta" : 0,
+        "theta_vel" : 0,
+
+        "time" : 0,
+        # Actuators
+        "flywheel_speed" : 0,
+        "intake_speed" : 0,
+
+        # Commands
+        "using_gps" : False,
         "is_shooting": False,
         "slow_mode" : False,
         "drone_mode" : False,
-        "flywheel_speed" : 0,
-        "intake_speed" : 0,
     }
+
+    target_state = {}
 
     def __init__(self, x_pos=0, y_pos=0, theta=0):
         '''
@@ -303,10 +316,120 @@ class Robot(GameObject):
         # Set origin of the gps
         gps.set_origin(0,0)
 
-##### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ###
-    def use_gps(self, value):
-        self.using_gps = value
+        self.set_target_state(self.state)
+        self.previous_state = self.state
+
+    def update(self):
+        '''
+        This is a VERY important function, it should be called once every [0.1 - 0.01] seconds (the faster the better, especially for controls)
+        It updates the robot's position based off of the encoders and the gyro
+        '''
+
+        self.delta_time = (getattr(time, "ticks_ms")() / 1000) - (self.previous_state["time"])
+
+        # prevent divide by zero
+        if self.delta_time == 0:
+            return
+        
+        # Update the previous state before doing state estimation
+        self.previous_state = self.state
+        self.estimate_state()
+
+
+        self.position_update()
+        self.flywheel_update()
+        # self.intake_update()
+
     
+    def position_update(self):
+        '''
+        Updates the position of the robot
+        '''
+    
+    def estimate_state(self):
+        '''
+        Estimates the state of the robot
+        '''
+        self.state["time"] = getattr(time, "ticks_ms")() / 1000
+        self.theta_vel = inertial.gyro_rate(ZAXIS, VelocityUnits.DPS)
+
+        # is a magic number that makes the gyro work better (experimentall I found that when the gyro reported that it spun 1 time, it actually overshot by about 3 degrees)
+        self.total_theta += self.theta_vel * self.delta_time / 0.99375
+        self.theta = self.total_theta - (self.total_theta // 360 * 360)
+        
+        # Use encoders to get our x and y positions so that we can take the derivative and get our velocity
+        self.x_enc, self.y_enc = self.get_position_from_encoders()
+
+        delta_x_from_encoders = self.x_enc - self.previous_state["x_enc"]
+        delta_y_from_encoders = self.y_enc - self.previous_state["y_enc"]
+
+        # delta_x_from_encoders *= 0.86
+        # delta_y_from_encoders *= 0.86 
+
+        delta_x_from_encoders, delta_y_from_encoders = rotate_vector_2d(delta_x_from_encoders, delta_y_from_encoders, -self.theta * DEG_TO_RAD)
+
+        # Get the velocity of the robot in deg/s for 4 wheels
+        self.x_vel = delta_x_from_encoders / self.delta_time
+        self.y_vel = delta_y_from_encoders / self.delta_time
+
+        # Velocity of robot from gps perspective
+        x_from_gps = 0
+        y_from_gps = 0
+        alpha = 0
+        
+        if self.using_gps and gps.quality() >= 100: 
+            # Update alpha to value that uses gps
+            alpha = 0.9
+            x_from_gps = gps.x_position(DistanceUnits.CM)
+            y_from_gps = gps.y_position(DistanceUnits.CM)
+
+            delta_x_from_gps = gps.x_position(DistanceUnits.CM) - self.previous_x_from_gps 
+            delta_y_from_gps = gps.y_position(DistanceUnits.CM) - self.previous_y_from_gps 
+
+            self.previous_x_from_gps = gps.x_position(DistanceUnits.CM)
+            self.previous_y_from_gps = gps.y_position(DistanceUnits.CM)
+            # print(abs(x_from_gps-self.x_pos), abs(y_from_gps-self.y_pos))
+            if abs(x_from_gps-self.x_pos) > 100 or abs(y_from_gps-self.y_pos) > 100:
+                self.x_pos = x_from_gps
+                self.y_pos = y_from_gps
+
+        # If we have not moved (from the encoders point of view), and the gps is not changing that much, then use the rolling average from the gps
+        # If gps is enabled then the low and high pass filter will make the x and y position more stable, if gps is not enabled then the formula won't use gps data (alpha would equal 0)
+        self.x_pos += delta_x_from_encoders * (1-alpha) # + (x_from_gps-self.x_pos) * alpha 
+        self.y_pos += delta_y_from_encoders * (1-alpha) # + (y_from_gps-self.y_pos) * alpha
+        
+        self.x_from_gps = x_from_gps
+        self.y_from_gps = y_from_gps
+
+        self.total_x_from_encoders += delta_x_from_encoders
+        self.total_y_from_encoders += delta_y_from_encoders
+
+        self.previous_wheel_encoder_values = self.get_current_wheel_encoder_values()
+
+        
+        
+
+
+
+
+##### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ###
+    def set_target_state(self, _state):
+        '''
+        Updates the state of the robot
+        '''
+        print("Before:", [z for z in self.target_state])
+        # This makes it so that in case the new target state doesn't have a value, instead of just deleting that value, we don't change it
+        for key in _state.keys():
+            if key in self.state:
+                self.target_state[key] = _state[key]
+        print("After:", [z for z in self.target_state])
+        self.update_constants()
+    
+    def update_constants(self):
+        self.drone_mode = self.target_state["drone_mode"]
+        self.slow_mode = self.target_state["slow_mode"]
+        self.using_gps = self.target_state["using_gps"]
+
     def print_debug_info(self):
         print("left_motor_a_position:", left_motor_a.position(DEGREES), "left_motor_b_position:", left_motor_b.position(DEGREES), "right_motor_a_position:", right_motor_a.position(DEGREES), "right_motor_b_position:", right_motor_b.position(DEGREES))
 
@@ -365,12 +488,14 @@ class Robot(GameObject):
         '''
         Prints a message on the screen and into the console with the current time and mode we're using
         '''
-        # message = f" ({(self.autonomous_timer.time() / 1000)}): {message}"
-        # if self.autonomous_timer.value() <= 15:
-        #     message = "AUTO" + message
-        # elif self.driver_controlled_timer.value() < 105:
-        #     message = "DRIVER" + message
-        # print(message)
+        message = f(" " ,((self.autonomous_timer.time() / 1000)), message)
+        if self.autonomous_timer.value() <= 15:
+            message = "AUTO" + message
+        elif self.driver_controlled_timer.value() < 105:
+            message = "DRIVER" + message
+        else:
+            message = "MATCH_OVER" + message
+        print(message)
         # brain.screen.print(message)
         
 
@@ -592,7 +717,7 @@ class Robot(GameObject):
         return
 
     # if you are readign this code and are not me (Matt Handzel) and don't know what this is, then look up python getters and setters
-
+##### PROPERTIES ##### PROPERTIES #####  PROPERTIES #####  PROPERTIES #####  PROPERTIES #####  PROPERTIES #####  PROPERTIES #####  PROPERTIES #####  PROPERTIES ##### 
     @property
     def position(self):
         return (self.x_pos, self.y_pos)
@@ -601,7 +726,13 @@ class Robot(GameObject):
     def position(self, _x, _y):
         self.x_pos = _x
         self.y_pos = _y
+    @property
+    def using_gps(self):
+        return self.state["using_gps"]
     
+    @using_gps.setter
+    def using_gps(self, _using_gps):
+        self.state["using_gps"] = _using_gps
     
     @property
     def x_pos(self):
@@ -611,6 +742,22 @@ class Robot(GameObject):
     def x_pos(self, _x):
         self.state["x_pos"] = _x
     
+    @property
+    def x_enc(self):
+        return self.state["x_enc"]
+    
+    @x_enc.setter
+    def x_enc(self, _x_enc):
+        self.state["x_enc"] = _x_enc
+
+    @property
+    def y_enc(self):
+        return self.state["y_enc"]
+    
+    @y_enc.setter
+    def y_enc(self, _y_enc):
+        self.state["y_enc"] = _y_enc
+
     @property
     def y_pos(self):
         return self.state["y_pos"]
@@ -700,80 +847,6 @@ class Robot(GameObject):
     def stop_intake(self):
         intake_motor.set_velocity(0, PERCENT)
 
-    def update(self):
-        '''
-        This is a VERY important function, it should be called once every [0.1 - 0.01] seconds (the faster the better, especially for controls)
-        It updates the robot's position based off of the encoders and the gyro
-        '''
-        # TODO: Set position based off of the gps
-        self.delta_time = getattr(time, "ticks_ms")() / \
-            1000 - self.previous_update_time
-
-        # prevent divide by zero
-        if self.delta_time == 0:
-            return
-        # Check to see if the robot has moved AT ALL
-
-        self.angular_velocity = inertial.gyro_rate(ZAXIS, VelocityUnits.DPS)
-        # is a magic number that makes the gyro work better (experimentall I found that when the gyro reported that it spun 1 time, it actually overshot by about 3 degrees)
-        self.total_theta += self.angular_velocity * self.delta_time / 0.99375
-        self.theta = self.total_theta - (self.total_theta // 360 * 360)
-        
-        # Use encoders to get our x and y positions so that we can take the derivative and get our velocity
-        self.x_from_encoders, self.y_from_encoders = self.get_position_from_encoders()
-
-        delta_x_from_encoders = self.x_from_encoders - self.previous_x_from_encoders
-        delta_y_from_encoders = self.y_from_encoders - self.previous_y_from_encoders
-
-        delta_x_from_encoders *= 0.86
-        delta_y_from_encoders *= 0.86 
-
-        delta_x_from_encoders, delta_y_from_encoders = rotate_vector_2d(delta_x_from_encoders, delta_y_from_encoders, -self.theta * DEG_TO_RAD)
-
-        # Get the velocity of the robot in deg/s for 4 wheels
-        self.x_vel = delta_x_from_encoders / self.delta_time
-        self.y_vel = delta_y_from_encoders / self.delta_time
-
-        # Velocity of robot from gps perspective
-        x_from_gps = 0
-        y_from_gps = 0
-        alpha = 0
-        
-        if self.using_gps and gps.quality() >= 100: 
-            # Update alpha to value that uses gps
-            alpha = 0.9
-            x_from_gps = gps.x_position(DistanceUnits.CM)
-            y_from_gps = gps.y_position(DistanceUnits.CM)
-
-            delta_x_from_gps = gps.x_position(DistanceUnits.CM) - self.previous_x_from_gps 
-            delta_y_from_gps = gps.y_position(DistanceUnits.CM) - self.previous_y_from_gps 
-
-            self.previous_x_from_gps = gps.x_position(DistanceUnits.CM)
-            self.previous_y_from_gps = gps.y_position(DistanceUnits.CM)
-            # print(abs(x_from_gps-self.x_pos), abs(y_from_gps-self.y_pos))
-            if abs(x_from_gps-self.x_pos) > 100 or abs(y_from_gps-self.y_pos) > 100:
-                self.x_pos = x_from_gps
-                self.y_pos = y_from_gps
-
-        # If we have not moved (from the encoders point of view), and the gps is not changing that much, then use the rolling average from the gps
-        # If gps is enabled then the low and high pass filter will make the x and y position more stable, if gps is not enabled then the formula won't use gps data (alpha would equal 0)
-        self.x_pos += delta_x_from_encoders * (1-alpha) # + (x_from_gps-self.x_pos) * alpha 
-        self.y_pos += delta_y_from_encoders * (1-alpha) # + (y_from_gps-self.y_pos) * alpha
-        
-        self.x_from_gps = x_from_gps
-        self.y_from_gps = y_from_gps
-
-        self.total_x_from_encoders += delta_x_from_encoders
-        self.total_y_from_encoders += delta_y_from_encoders
-
-        self.previous_wheel_encoder_values = self.get_current_wheel_encoder_values()
-        self.previous_theta = self.theta
-
-        self.previous_update_time = getattr(time, "ticks_ms")() / 1000
-        self.previous_x_from_encoders = self.x_from_encoders
-        self.previous_y_from_encoders = self.y_from_encoders
-
-        self.flywheel_update()
 
     def get_current_wheel_encoder_values(self):
         '''
@@ -1099,14 +1172,23 @@ def driver_control():
 
     r.driver_controlled_timer.reset()
 
+    r.autonomous_timer.reset()
+
+
     while True:
         # Update the robot's information
+        # r.set_target_state(
+        #     {
+        #         ""
+        #     }
+        # )
         r.update()
 
         # Timer to print things out to the terminal every x seconds
         if (timer.time() > 0.1 * 1000):
-            # print("pos", r.x_pos, r.y_pos, "gps", r.x_from_gps, r.y_from_gps, "vel", r.x_velocity, r.y_velocity)
-            print(r.driver_controlled_timer.value(), flywheel_motor_1.velocity(PERCENT), flywheel_motor_2.velocity(PERCENT), flywheel_motor_1.power(), flywheel_motor_2.power(), flywheel_motor_1.current(), flywheel_motor_2.current(), flywheel_motor_1.torque(), flywheel_motor_2.torque(), flywheel_motor_1.temperature(), flywheel_motor_2.temperature())
+            # r.print(f("pos",r.x_pos,r.y_pos, "gps", r.x_from_gps, r.y_from_gps, "vel",r.x_vel,r.y_vel))
+            r.print(f("x_enc", r.x_enc, "prev", r.previous_state["x_enc"], "theta", r.theta,r.theta_vel,  "time", r.state["time"], r.delta_time, r.previous_state["time"]))
+            # print(r.driver_controlled_timer.value(), flywheel_motor_1.velocity(PERCENT), flywheel_motor_2.velocity(PERCENT), flywheel_motor_1.power(), flywheel_motor_2.power(), flywheel_motor_1.current(), flywheel_motor_2.current(), flywheel_motor_1.torque(), flywheel_motor_2.torque(), flywheel_motor_1.temperature(), flywheel_motor_2.temperature())
             timer.reset()
 
         # robot axis are based on x, y, and r vectors
@@ -1225,7 +1307,7 @@ field_length = 356  # CM
 r = Robot(0, 0)
 
 # r.use_gps(gps.installed())
-r.use_gps(False)
+r.using_gps = False
 r.drone_mode = True
 r.slow_mode = False
 
