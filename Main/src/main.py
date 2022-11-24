@@ -21,9 +21,8 @@ right_motor_b = Motor(Ports.PORT11, GearSetting.RATIO_18_1, True)
 right_drive_smart = MotorGroup(right_motor_a, right_motor_b)
 drivetrain = DriveTrain(
     left_drive_smart, right_drive_smart, 319.19, 295, 40, MM, 1)
-launching_motor_1 = Motor(Ports.PORT4, GearSetting.RATIO_6_1, False)
-launching_motor_2 = Motor(Ports.PORT5, GearSetting.RATIO_6_1, True)
-launching_motor = MotorGroup(launching_motor_1, launching_motor_2)
+flywheel_motor_1 = Motor(Ports.PORT4, GearSetting.RATIO_6_1, False)
+flywheel_motor_2 = Motor(Ports.PORT5, GearSetting.RATIO_6_1, True)
 
 led_a = Led(brain.three_wire_port.a)
 inertial = Inertial(Ports.PORT9)
@@ -197,11 +196,6 @@ class Robot(GameObject):
     theta_robot: float = 0
     length: float = 38.1
 
-    theta: float = 0
-
-    x_velocity: float = 0
-    y_velocity: float = 0
-
     # Set the offset for the flywheel from the center of the robot
     flywheel_offset_x = 0   
     flywheel_offset_y = 0
@@ -263,6 +257,32 @@ class Robot(GameObject):
 
     is_shooting = False
 
+    flywheel_motor_1_PID = PID(2, 0, 0)
+    flywheel_motor_2_PID = PID(2, 0, 0)
+
+    flywheel_speed = 0
+
+    # State dictionary will hold ALL information about the robot
+    '''
+    '''
+    state = {
+        "x_pos" : 0,
+        "y_pos" : 0,
+        "x_vel" : 0,
+        "y_vel" : 0,
+        "x_gps" : 0,
+        "y_gps" : 0,
+        "x_enc" : 0,
+        "y_enc" : 0,
+        "using_gps" : False,
+        "theta" : 0,
+        "is_shooting": False,
+        "slow_mode" : False,
+        "drone_mode" : False,
+        "flywheel_speed" : 0,
+        "intake_speed" : 0,
+    }
+
     def __init__(self, x_pos=0, y_pos=0, theta=0):
         '''
         Initializes the robot class, computes the max velocity and acceleration
@@ -310,7 +330,7 @@ class Robot(GameObject):
         Function returns true if the values of the encoders for the motors have
         changed AT ALL
         '''
-        return self.x_velocity == 0 and self.y_velocity == 0
+        return self.x_vel == 0 and self.y_vel == 0
 
     def set_team(self, _color):
         '''
@@ -440,7 +460,7 @@ class Robot(GameObject):
                 print(x_pos, y_pos, theta_to_target * RAD_TO_DEG)
 
                 self.drive(math.cos(theta_to_target) * 20, math.sin(theta_to_target)
-                           * 20, 0, field_based_driving=True, square_input=False)
+                           * 20, 0, square_input=False)
                 wait(0.1, SECONDS)
             print("Done!") 
 
@@ -581,7 +601,96 @@ class Robot(GameObject):
     def position(self, _x, _y):
         self.x_pos = _x
         self.y_pos = _y
+    
+    
+    @property
+    def x_pos(self):
+        return self.state["x_pos"]
+    
+    @x_pos.setter
+    def x_pos(self, _x):
+        self.state["x_pos"] = _x
+    
+    @property
+    def y_pos(self):
+        return self.state["y_pos"]
+    
+    @y_pos.setter
+    def y_pos(self, _y):
+        self.state["y_pos"] = _y
+    
+    @property
+    def theta(self):
+        return self.state["theta"]
+    
+    @theta.setter
+    def theta(self, _theta):
+        self.state["theta"] = _theta
+    
+    @property
+    def x_vel(self):
+        return self.state["x_vel"]
+    
+    @x_vel.setter
+    def x_vel(self, _x_vel):
+        self.state["x_vel"] = _x_vel
+    
+    @property
+    def y_vel(self):
+        return self.state["y_vel"]
+    
+    @y_vel.setter
+    def y_vel(self, _y_vel):
+        self.state["y_vel"] = _y_vel
+    
+    @property
+    def theta_vel(self):
+        return self.state["theta_vel"]
+    
+    @theta_vel.setter
+    def theta_vel(self, _theta_vel):
+        self.state["theta_vel"] = _theta_vel
+    
+    @property
+    def x_gps(self):
+        return self.state["x_gps"]
+    
+    @x_gps.setter
+    def x_gps(self, _x_gps):
+        self.state["x_gps"] = _x_gps
+    
+    @property
+    def y_gps(self):
+        return self.state["y_gps"]
+    
+    @y_gps.setter
+    def y_gps(self, _y_gps):
+        self.state["y_gps"] = _y_gps
+    
+    @property
+    def theta_gps(self):
+        return self.state["theta_gps"]
+    
+    @theta_gps.setter
+    def theta_gps(self, _theta_gps):
+        self.state["theta_gps"] = _theta_gps
+    
+    @property
+    def drone_mode(self):
+        return self.state["drone_mode"]
+        
+    @drone_mode.setter
+    def drone_mode(self, _drone_mode):
+        self.state["drone_mode"] = _drone_mode
 
+    @property
+    def slow_mode(self):
+        return self.state["slow_mode"]
+    
+    @slow_mode.setter
+    def slow_mode(self, _slow_mode):
+        self.state["slow_mode"] = _slow_mode
+    
     def unload(self):
         intake_motor.set_velocity(-50, PERCENT)
 
@@ -622,8 +731,8 @@ class Robot(GameObject):
         delta_x_from_encoders, delta_y_from_encoders = rotate_vector_2d(delta_x_from_encoders, delta_y_from_encoders, -self.theta * DEG_TO_RAD)
 
         # Get the velocity of the robot in deg/s for 4 wheels
-        self.x_velocity = delta_x_from_encoders / self.delta_time
-        self.y_velocity = delta_y_from_encoders / self.delta_time
+        self.x_vel = delta_x_from_encoders / self.delta_time
+        self.y_vel = delta_y_from_encoders / self.delta_time
 
         # Velocity of robot from gps perspective
         x_from_gps = 0
@@ -664,6 +773,8 @@ class Robot(GameObject):
         self.previous_x_from_encoders = self.x_from_encoders
         self.previous_y_from_encoders = self.y_from_encoders
 
+        self.flywheel_update()
+
     def get_current_wheel_encoder_values(self):
         '''
         Returns a vector of all of the encoder values
@@ -694,10 +805,36 @@ class Robot(GameObject):
 
 
 ##### SHOOTER ### SHOOTER ### SHOOTER ### SHOOTER ### SHOOTER ### SHOOTER ### SHOOTER ### SHOOTER ###
-    def set_launcher_speed(self, speed):
-        launching_motor_1.set_velocity(-speed * 60 / 100, PERCENT)
-        launching_motor_2.set_velocity(-speed * 60 / 100, PERCENT)
+    def set_flywheel_speed(self, speed):
+        self.flywheel_speed = speed
+        
+    
+    def flywheel_update(self):
+        if self.flywheel_speed != 0:
+            self.flywheel_pid(self.flywheel_speed)
+        else:
+            flywheel_motor_1.set_velocity(0, PERCENT)
+            flywheel_motor_2.set_velocity(0, PERCENT)
+        
+    
+    def flywheel_pid(self, speed):
+        MAX_FLYWHEEL_SPEED = 100 / 60
+        speed /= MAX_FLYWHEEL_SPEED
 
+        error_1 = -flywheel_motor_1.velocity(VelocityUnits.PERCENT) - speed
+        error_2 = -flywheel_motor_2.velocity(VelocityUnits.PERCENT) - speed
+        output_1 = self.flywheel_motor_1_PID.update(error_1)
+        output_2 = self.flywheel_motor_2_PID.update(error_2)
+
+        
+        output_1 = output_1 if abs(output_1) < 100 else 100 * sign(output_1)
+        output_2 = output_2 if abs(output_2) < 100 else 100 * sign(output_2)
+        output_1 /= MAX_FLYWHEEL_SPEED
+        output_2 /= MAX_FLYWHEEL_SPEED
+        output_1 -= speed
+        output_2 -= speed
+        flywheel_motor_1.set_velocity(output_1, PERCENT)
+        flywheel_motor_2.set_velocity(output_2, PERCENT)
 
     def shoot_disk(self):
         '''
@@ -780,7 +917,7 @@ class Robot(GameObject):
         roller_motor.set_velocity(-100, PERCENT)
 
 ##### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ###
-    def drive(self, x_vector, y_vector, r_vector, field_based_driving=False, constant_acceleration=True, square_input=True, slow_mode = False):
+    def drive(self, x_vector, y_vector, r_vector, constant_acceleration=True, square_input=True):
         '''
         Drives the robot.
         params - 
@@ -798,7 +935,7 @@ class Robot(GameObject):
 
         # Cool driving toggle (basically you rotate the target direction vector based on)
         # the robots heading (https://stackoverflow.com/questions/14607640/rotating-a-vector-in-3d-space)
-        if field_based_driving:
+        if self.drone_mode:
             x_vector, y_vector = rotate_vector_2d(x_vector, y_vector, self.theta * DEG_TO_RAD)
 
         # Square the input vectors and divide by 100 for better controls
@@ -807,7 +944,7 @@ class Robot(GameObject):
             y_vector = (y_vector ** 2) / 100 * sign(y_vector)
             r_vector = (r_vector ** 2) / 100 * sign(r_vector)
 
-        if slow_mode:
+        if self.slow_mode:
             x_vector = x_vector / 4
             y_vector = y_vector / 4
             r_vector = r_vector / 4
@@ -969,28 +1106,30 @@ def driver_control():
         # Timer to print things out to the terminal every x seconds
         if (timer.time() > 0.1 * 1000):
             # print("pos", r.x_pos, r.y_pos, "gps", r.x_from_gps, r.y_from_gps, "vel", r.x_velocity, r.y_velocity)
-            print("VEL", launching_motor_1.velocity(PERCENT), launching_motor_2.velocity(PERCENT), "TEMP", launching_motor_1.temperature(), launching_motor_2.temperature())
+            print(r.driver_controlled_timer.value(), flywheel_motor_1.velocity(PERCENT), flywheel_motor_2.velocity(PERCENT), flywheel_motor_1.power(), flywheel_motor_2.power(), flywheel_motor_1.current(), flywheel_motor_2.current(), flywheel_motor_1.torque(), flywheel_motor_2.torque(), flywheel_motor_1.temperature(), flywheel_motor_2.temperature())
             timer.reset()
 
         # robot axis are based on x, y, and r vectors
-        # r.drive(controller_1.axis4.position(), controller_1.axis3.position(),
-        #         controller_1.axis1.position(), False, True, False, controller_1.buttonR2.pressing())
+        r.drive(controller_1.axis4.position(), controller_1.axis3.position(),
+                controller_1.axis1.position(), False, True)
+            
+        r.slow_mode = controller_1.buttonR2.pressing()
 
         # Run the intake subsystem, set the desired speed
-        r.intake(controller_1.axis2.position())
+        # r.intake(controller_1.axis2.position())
 
-        # r.set_launcher_speed(controller_2.axis3.position())
+        # r.set_flywheel_speed(controller_1.axis3.position())
 
-        if controller_2.buttonUp.pressing():
-            r.set_launcher_speed(100)
-        elif controller_2.buttonDown.pressing():
-            r.set_launcher_speed(0)
-        elif controller_2.buttonLeft.pressing():
-            r.set_launcher_speed(66)
-        elif controller_2.buttonRight.pressing():
-            r.set_launcher_speed(33)
+        if controller_1.buttonUp.pressing():
+            r.set_flywheel_speed(100)
+        elif controller_1.buttonDown.pressing():
+            r.set_flywheel_speed(0)
+        elif controller_1.buttonLeft.pressing():
+            r.set_flywheel_speed(66)
+        elif controller_1.buttonRight.pressing():
+            r.set_flywheel_speed(33)
         
-        if controller_2.buttonA.pressing():
+        if controller_1.buttonA.pressing():
             shooter_thread = Thread(r.shoot_disk)
 
         if controller_1.buttonR1.pressing() and not r.is_shooting:
@@ -1030,11 +1169,11 @@ def init():
     left_motor_b.set_stopping(BRAKE)
     right_motor_b.set_stopping(BRAKE)
 
-    launching_motor_1.spin(FORWARD)
-    launching_motor_2.spin(FORWARD)
+    flywheel_motor_1.spin(FORWARD)
+    flywheel_motor_2.spin(FORWARD)
 
-    launching_motor_1.set_velocity(0)
-    launching_motor_2.set_velocity(0)
+    flywheel_motor_1.set_velocity(0)
+    flywheel_motor_2.set_velocity(0)
 
     left_motor_a.set_velocity(0, PERCENT)
     right_motor_a.set_velocity(0, PERCENT)
@@ -1087,6 +1226,11 @@ r = Robot(0, 0)
 
 # r.use_gps(gps.installed())
 r.use_gps(False)
+r.drone_mode = True
+r.slow_mode = False
+
+r.flywheel_motor_1_PID.set_constants(0.5,0.01,10)
+r.flywheel_motor_2_PID.set_constants(0.5,0.01,10)
 
 init()
 
@@ -1144,3 +1288,19 @@ driver_control()
 
 # Starting 0,0
 # Ending = 0.4, 315, 117.5
+
+
+# Flywheel
+
+# no pid, direct control
+# 3.024 1.5, 2.23
+# 5.184 61, 48 
+
+
+# pid (1,0,0)
+# 1.108 0,0
+# 3.24 60, 50
+
+# pid (2,0,0)
+# 1.08, 0,0
+# 3.348 60, 51
