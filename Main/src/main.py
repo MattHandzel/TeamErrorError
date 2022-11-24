@@ -11,6 +11,7 @@ brain = Brain()
 
 # Robot configuration code
 controller_1 = Controller(PRIMARY)
+controller_2 = Controller(PARTNER)
 
 left_motor_a = Motor(Ports.PORT1, GearSetting.RATIO_18_1, False)
 left_motor_b = Motor(Ports.PORT6, GearSetting.RATIO_18_1, False)
@@ -20,8 +21,8 @@ right_motor_b = Motor(Ports.PORT11, GearSetting.RATIO_18_1, True)
 right_drive_smart = MotorGroup(right_motor_a, right_motor_b)
 drivetrain = DriveTrain(
     left_drive_smart, right_drive_smart, 319.19, 295, 40, MM, 1)
-launching_motor_1 = Motor(Ports.PORT7, GearSetting.RATIO_6_1, False)
-launching_motor_2 = Motor(Ports.PORT10, GearSetting.RATIO_6_1, True)
+launching_motor_1 = Motor(Ports.PORT4, GearSetting.RATIO_6_1, False)
+launching_motor_2 = Motor(Ports.PORT5, GearSetting.RATIO_6_1, True)
 launching_motor = MotorGroup(launching_motor_1, launching_motor_2)
 
 led_a = Led(brain.three_wire_port.a)
@@ -30,6 +31,11 @@ index_motor = Motor(Ports.PORT2, GearSetting.RATIO_18_1, False)
 roller_motor = Motor(Ports.PORT3, GearSetting.RATIO_18_1, False)
 intake_motor = Motor(Ports.PORT13, GearSetting.RATIO_18_1, False)
 roller_optical = Optical(Ports.PORT16)
+
+indexer = Pneumatics(brain.three_wire_port.a)
+expansion = Pneumatics(brain.three_wire_port.b)
+
+
 
 gps = Gps(Ports.PORT3)
 
@@ -252,6 +258,11 @@ class Robot(GameObject):
     previous_x_from_gps = 0
     previous_y_from_gps = 0
 
+    total_x_from_encoders = 0
+    total_y_from_encoders = 0
+
+    is_shooting = False
+
     def __init__(self, x_pos=0, y_pos=0, theta=0):
         '''
         Initializes the robot class, computes the max velocity and acceleration
@@ -334,13 +345,14 @@ class Robot(GameObject):
         '''
         Prints a message on the screen and into the console with the current time and mode we're using
         '''
-        message = f" ({(self.autonomous_timer.time() / 1000):.2f}): {message}"
-        if self.autonomous_timer.value() <= 15:
-            message = "AUTO" + message
-        elif self.driver_controlled_timer.value() < 105:
-            message = "DRIVER" + message
-        print(message)
-        brain.screen.print(message)
+        # message = f" ({(self.autonomous_timer.time() / 1000)}): {message}"
+        # if self.autonomous_timer.value() <= 15:
+        #     message = "AUTO" + message
+        # elif self.driver_controlled_timer.value() < 105:
+        #     message = "DRIVER" + message
+        # print(message)
+        # brain.screen.print(message)
+        
 
 ##### AUTO ### AUTO ### AUTO ### AUTO ### AUTO ### AUTO ### AUTO ### AUTO ### AUTO ### AUTO ###
     def turn_to_roller(self):
@@ -556,7 +568,7 @@ class Robot(GameObject):
         # Another way to approach this is to use a PID-esque loop where we check our current heading
         # at each timestep and drive the robot at a specific velocity until the desired heading is reached
 
-        self.print(f"Turning to heading {_heading}")
+        # self.print(f"Turning to heading {_heading}")
         return
 
     # if you are readign this code and are not me (Matt Handzel) and don't know what this is, then look up python getters and setters
@@ -602,7 +614,10 @@ class Robot(GameObject):
         self.x_from_encoders, self.y_from_encoders = self.get_position_from_encoders()
 
         delta_x_from_encoders = self.x_from_encoders - self.previous_x_from_encoders
-        delta_y_from_encoders = self.y_from_encoders - self.previous_y_from_encoders 
+        delta_y_from_encoders = self.y_from_encoders - self.previous_y_from_encoders
+
+        delta_x_from_encoders *= 0.86
+        delta_y_from_encoders *= 0.86 
 
         delta_x_from_encoders, delta_y_from_encoders = rotate_vector_2d(delta_x_from_encoders, delta_y_from_encoders, -self.theta * DEG_TO_RAD)
 
@@ -617,7 +632,7 @@ class Robot(GameObject):
         
         if self.using_gps and gps.quality() >= 100: 
             # Update alpha to value that uses gps
-            alpha = 0.1
+            alpha = 0.9
             x_from_gps = gps.x_position(DistanceUnits.CM)
             y_from_gps = gps.y_position(DistanceUnits.CM)
 
@@ -626,11 +641,21 @@ class Robot(GameObject):
 
             self.previous_x_from_gps = gps.x_position(DistanceUnits.CM)
             self.previous_y_from_gps = gps.y_position(DistanceUnits.CM)
+            # print(abs(x_from_gps-self.x_pos), abs(y_from_gps-self.y_pos))
+            if abs(x_from_gps-self.x_pos) > 100 or abs(y_from_gps-self.y_pos) > 100:
+                self.x_pos = x_from_gps
+                self.y_pos = y_from_gps
 
         # If we have not moved (from the encoders point of view), and the gps is not changing that much, then use the rolling average from the gps
         # If gps is enabled then the low and high pass filter will make the x and y position more stable, if gps is not enabled then the formula won't use gps data (alpha would equal 0)
-        self.x_pos += delta_x_from_encoders * (1-alpha) + (self.x_pos - x_from_gps) * alpha
-        self.y_pos += delta_y_from_encoders * (1-alpha) + (self.y_pos - y_from_gps) * alpha
+        self.x_pos += delta_x_from_encoders * (1-alpha) # + (x_from_gps-self.x_pos) * alpha 
+        self.y_pos += delta_y_from_encoders * (1-alpha) # + (y_from_gps-self.y_pos) * alpha
+        
+        self.x_from_gps = x_from_gps
+        self.y_from_gps = y_from_gps
+
+        self.total_x_from_encoders += delta_x_from_encoders
+        self.total_y_from_encoders += delta_y_from_encoders
 
         self.previous_wheel_encoder_values = self.get_current_wheel_encoder_values()
         self.previous_theta = self.theta
@@ -669,22 +694,28 @@ class Robot(GameObject):
 
 
 ##### SHOOTER ### SHOOTER ### SHOOTER ### SHOOTER ### SHOOTER ### SHOOTER ### SHOOTER ### SHOOTER ###
-    def set_launcher_speed(self):
-        pass
+    def set_launcher_speed(self, speed):
+        launching_motor_1.set_velocity(-speed * 60 / 100, PERCENT)
+        launching_motor_2.set_velocity(-speed * 60 / 100, PERCENT)
+
 
     def shoot_disk(self):
         '''
         This function will shoot a disk from the flywheel
         '''
+        self.is_shooting = True
         # Compute speed that the flywheel needs to speed
 
         # Set the motors to the speed
 
         # Index a disk out of the magazine
-        index_motor.spin_for(FORWARD, 2, TURNS, True)
-
+        # index_motor.spin_for(FORWARD, 2, TURNS, True)
+        indexer.open()
+        wait(0.5, SECONDS)
+        indexer.close()
+        
+        self.is_shooting = False
         # Launch disk
-
         pass
 
     def compute_speed_of_flywheel(self):
@@ -937,17 +968,32 @@ def driver_control():
 
         # Timer to print things out to the terminal every x seconds
         if (timer.time() > 0.1 * 1000):
-            print("pos", r.x_pos * (138 - 21.5) / (312.5), r.y_pos* (138 - 21.5) / (312.5), "vel",r.x_velocity, r.y_velocity)
+            # print("pos", r.x_pos, r.y_pos, "gps", r.x_from_gps, r.y_from_gps, "vel", r.x_velocity, r.y_velocity)
+            print("VEL", launching_motor_1.velocity(PERCENT), launching_motor_2.velocity(PERCENT), "TEMP", launching_motor_1.temperature(), launching_motor_2.temperature())
             timer.reset()
 
         # robot axis are based on x, y, and r vectors
-        r.drive(controller_1.axis4.position(), controller_1.axis3.position(),
-                controller_1.axis1.position(), True, True, False, controller_1.buttonR2.pressing())
+        # r.drive(controller_1.axis4.position(), controller_1.axis3.position(),
+        #         controller_1.axis1.position(), False, True, False, controller_1.buttonR2.pressing())
 
         # Run the intake subsystem, set the desired speed
         r.intake(controller_1.axis2.position())
 
-        if controller_1.buttonR1.pressing():
+        # r.set_launcher_speed(controller_2.axis3.position())
+
+        if controller_2.buttonUp.pressing():
+            r.set_launcher_speed(100)
+        elif controller_2.buttonDown.pressing():
+            r.set_launcher_speed(0)
+        elif controller_2.buttonLeft.pressing():
+            r.set_launcher_speed(66)
+        elif controller_2.buttonRight.pressing():
+            r.set_launcher_speed(33)
+        
+        if controller_2.buttonA.pressing():
+            shooter_thread = Thread(r.shoot_disk)
+
+        if controller_1.buttonR1.pressing() and not r.is_shooting:
             r.shoot_disk()
 
         if controller_1.buttonL2.pressing():
@@ -961,6 +1007,7 @@ def driver_control():
 
         if not controller_1.buttonX.pressing():
             reset_theta_timer.reset()
+
 
         # If someone has pressed button x for more than 1 second, reset the orientaiton
         if reset_theta_timer.value() > 1:
@@ -976,10 +1023,6 @@ def driver_control():
 
 def init():
     # Make it so that the motors stop instead of coast
-    # left_motor_a.set_stopping(HOLD)
-    # right_motor_a.set_stopping(HOLD)
-    # left_motor_b.set_stopping(HOLD)
-    # right_motor_b.set_stopping(HOLD)
 
     # HAVE DAVID TRY THIS OUT
     left_motor_a.set_stopping(BRAKE)
@@ -989,6 +1032,9 @@ def init():
 
     launching_motor_1.spin(FORWARD)
     launching_motor_2.spin(FORWARD)
+
+    launching_motor_1.set_velocity(0)
+    launching_motor_2.set_velocity(0)
 
     left_motor_a.set_velocity(0, PERCENT)
     right_motor_a.set_velocity(0, PERCENT)
@@ -1017,11 +1063,14 @@ def init():
     roller_optical.set_light_power(0)
     roller_optical.object_detect_threshold(100)
 
+
     # Wait for the gyro to settle, if it takes more then 10 seconds then close out of the loop
     t = Timer()
 
     t.reset()
-    while inertial.gyro_rate(ZAXIS) != 0 and t.value() < 10:
+    if gps.installed():
+        gps.calibrate()
+    while (inertial.gyro_rate(ZAXIS) != 0 and t.value() < 10):
         print("Waiting for gyro to init...")
         wait(0.1, SECONDS)
 
@@ -1036,10 +1085,10 @@ field_length = 356  # CM
 
 r = Robot(0, 0)
 
-r.use_gps(gps.installed())
+# r.use_gps(gps.installed())
+r.use_gps(False)
 
 init()
-gps.calibrate()
 
 # autonomous()
 driver_control()
@@ -1047,25 +1096,27 @@ driver_control()
 # competition = Competition(driver_control, autonomous)
 
 ##! PRIORITY
-# TODO: Use the gps and figure out how precise it is
-# TODO: make a "switch" that can make the robot use the gps for its current position or motor encoder values
-# TODO: use threads for auto mode to do multiple commands
-# TODO: Work with david and figure out how to make robot driving feel better (more responsive, smooth, etc.)
-# TODO: Use sensor fusion with Kalman filter for better position
 # TODO: Revamp the driving command to work with go_to_position and inputting position and rotation vectors 
+# TODO: Make a spin to command heading
+# TODO: Make a better pose/orienation initialization/resetting tool (initialize the position in the init() command, don't worry if we can't init yet)
+# TODO: Use sensor fusion with Kalman filter for better position
+# TODO: Make it os that the we init the robots orientation based off othe GPS (round it to the nearest 90 or 45 degrees), but make it so that drone mode still works
+# TODO: Use the gps and figure out how precise it is
+# TODO: Make pid for 
 
 # * IMPORTANT
+# TODO: test out the custom robot print function
+# TODO: Work with david and figure out how to make robot driving feel better (more responsive, smooth, etc.)
 # TODO: Figure out variance in GPS sensor data and variance in model (Q and R)
 # TODO: Test out the cool Robot.print command and see if it prints on brain and console and how well it does so
-# TODO: Make a spin to command heading
-# TODO: test to see if threads die when they lose scope
-# TODO: Figure out the sig figs of the inbuilt Timer class, if its good lets use it instead of time.time_ms
-# TODO: Change this to be relative to the match time???
-# TODO: make an auto path class that has information like description, color, etc.
 # TODO: make the offset of the gps so that it reports the position of the center of the robot
 # TODO: When the robot has an x,y position close to the edge of the field, make it so that the robot physically cannot slam into the wall (or use sensors)
+# TODO: Change this to be relative to the match time???
 
 # Not important
+# TODO: test to see if threads die when they lose scope
+# TODO: Figure out the sig figs of the inbuilt Timer class, if its good lets use it instead of time.time_ms
+# TODO: make an auto path class that has information like description, color, etc.
 # TODO: Research what the motor.set_max_torque function does
 # TODO: Research how to use motor.torqax_torque function does
 # TODO: Research how to use motor.torque
@@ -1073,3 +1124,23 @@ driver_control()
 # TODO: Make an info screen that showue
 # TODO: Make an info screen that shows if there are any status issues wrong with the robot
 # TODO: If you know that motor could be against the greater resistance that could stall it and overheat, you could limit the current to avoid overheating and raise it again when there is no resistance.
+
+# GPS
+# Starting = -152.5, 8.4
+# Ending = 133.8, 4.0
+
+# Starting = -152, 7.8
+# Ending 160, -10
+
+# Starting = -152, 1
+# Ending = 143, -5
+
+# ENCODERS
+# Starting = 0,0
+# Ending = 6.2, 303.4
+
+# Starting 0,0
+# Ending 16, 331 (Real, 123 3/4)
+
+# Starting 0,0
+# Ending = 0.4, 315, 117.5

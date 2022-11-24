@@ -208,7 +208,6 @@ def returnSolutions(angle, velocity, delta_x, delta_y, goal_height, goal_length)
       if SIN_ANGLE * velocity * max(x) + g * max(x) ** 2 / 2 < goal_bottom + goal_height + 0.02 or SIN_ANGLE * velocity * max(x) + g * max(x) ** 2 / 2 > goal_top:
         
 
-
         # if SIN_ANGLE * velocity * min(x) + (1/2 * g) * min(x) * min(x) > max_y:
         #   continue
         
