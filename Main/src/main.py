@@ -209,9 +209,6 @@ class Robot(GameObject):
 
     flywheel_angle = 45 * DEG_TO_RAD
 
-    previous_wheel_encoder_values = Vector([0, 0, 0, 0])
-    previous_sum_of_wheel_encoders: int = 0
-
     previous_update_time: float = 0
 
     wheel_max_rpm: float = 200
@@ -264,7 +261,7 @@ class Robot(GameObject):
 
     flywheel_speed = 0
 
-    delta_time: float = 0
+    delta_time = 0
 
     # State dictionary will hold ALL information about the robot
     '''
@@ -292,6 +289,7 @@ class Robot(GameObject):
         "is_shooting": False,
         "slow_mode" : False,
         "drone_mode" : False,
+        "autonomous" : False
     }
 
     target_state = {}
@@ -345,6 +343,105 @@ class Robot(GameObject):
         '''
         Updates the position of the robot
         '''
+        # These are the target position for each wheel, you find the target positions by finding the direction the wheels
+        # are pointing in and then multiplying by the sin(theta) for the x and cos(theta) for theta
+        # Speed towards target will be controlled by PID loop
+        delta_x = self.target_state["x_pos"] - self.x_pos
+        delta_y = self.target_state["y_pos"] - self.y_pos
+        delta_theta = self.target_state["theta"] - self.theta
+        
+        target_x_vel = self.target_state["x_vel"]
+        target_y_vel = self.target_state["y_vel"]
+        target_theta_vel = self.target_state["theta_vel"]
+
+        # # If we're close enough to the target, stop moving
+        # if abs(delta_x) <= self.position_tolerance or abs(delta_y) <= self.position_tolerance:
+        #     self.drive(0,0,self.target_state["theta_vel"])
+        #     return
+
+        # # Prevent divide by 0 error
+        # theta_to_target = 0
+        # if delta_x != 0:
+        #     theta_to_target = math.atan(delta_y / delta_x)
+            
+        #     # If theta_to_target is less than 0, then add 180 degrees
+        #     theta_to_target += math.pi * (delta_x < 0)
+
+        # Spin the motors (in case they were stopped before, might be able to be ommitted later)
+        left_motor_a.spin(FORWARD)
+        left_motor_b.spin(FORWARD)
+        right_motor_a.spin(FORWARD)
+        right_motor_b.spin(FORWARD)
+
+        # Cool driving toggle (basically you rotate the target direction vector based on)
+        # the robots heading (https://stackoverflow.com/questions/14607640/rotating-a-vector-in-3d-space)
+        if self.drone_mode:
+            target_x_vel, target_y_vel = rotate_vector_2d(target_x_vel, target_y_vel, self.theta * DEG_TO_RAD)
+
+        if self.slow_mode:
+            target_x_vel = target_x_vel / 4
+            target_y_vel = target_y_vel / 4
+            target_theta_vel = target_theta_vel / 4
+
+        # HAVE DAVID TRY THIS OUT (sqrt the input might be better for da vid)
+        # x_vector = (abs(_x_vector) ** (0.5)) * 10 * sign(_x_vector)
+        # y_vector = (abs(_y_vector) ** (0.5)) * 10 * sign(_y_vector)
+        # r_vector = (abs(_r_vector) ** (0.5)) * 10 * sign(_r_vector)
+
+        # Get the motor powers
+        left_motor_a_target_velocity = target_x_vel + target_y_vel + target_theta_vel
+        right_motor_a_target_velocity = -target_x_vel + target_y_vel - target_theta_vel
+        left_motor_b_target_velocity = -target_x_vel + target_y_vel + target_theta_vel
+        right_motor_b_target_velocity = target_x_vel + target_y_vel - target_theta_vel
+
+        # Constant-ish acceleration profile. Basically, our acceleration is constant except for when we are close to starting or stopping (to prevent jerks/slides)
+        slow_down_speed_threshold = 5
+
+        max_acceleration_left_motor_a = self.max_acceleration
+        max_acceleration_right_motor_a = self.max_acceleration
+        max_acceleration_left_motor_b = self.max_acceleration
+        max_acceleration_right_motor_b = self.max_acceleration
+
+        # If we aren't moving from a stop to a start or vice versa, decrease acceleration
+        if abs(left_motor_a.velocity(PERCENT)) < slow_down_speed_threshold:
+            max_acceleration_left_motor_a = self.max_acceleration * 2
+
+        if abs(right_motor_a.velocity(PERCENT)) < slow_down_speed_threshold:
+            max_acceleration_right_motor_a = self.max_acceleration * 2
+
+        if abs(left_motor_b.velocity(PERCENT)) < slow_down_speed_threshold:
+            max_acceleration_left_motor_b = self.max_acceleration * 2
+
+        if abs(right_motor_b.velocity(PERCENT)) < slow_down_speed_threshold:
+            max_acceleration_right_motor_b = self.max_acceleration * 2
+
+        # Okie doki, this line is gonna need some documentation, but first some labels:
+        # (self.max_acceleration / self.max_velocity * 100) means the maximum acceleration of our robot IN A PERCENTAGE (i.e. 10 percent per second, 50 percent per second, -10 percent, per second)
+        # (self.max_acceleration / self.max_velocity * 100) * self.delta_time is the maximum change in velocity of the robot FOR THIS RUN THROUGH THE LOOP (by multipling by delta time we get how long its been since the last loop, which means we can change our velocity by that change in time time acceleration), Ex. if its been 0.1 seconds since the last loop, then our change in velocity can be 10 percent, but if it was 1 second then our change in velocity can be 100 percent beceause its been such a long time (if you still don't understand then learn what integration is)
+        # the goal of the following lines is to clamp the change in velocity to not go over some number (max_acceleration),
+        # so in order to do that we clamp motor_target_velocity between the motor_current_velocity plus the maximum change in velocity for this run of the loop, repeat for each wheel
+        left_motor_a_target_velocity = clamp(left_motor_a_target_velocity, (max_acceleration_left_motor_a / self.max_velocity * 100) * self.delta_time + left_motor_a.velocity(
+            PERCENT), -(max_acceleration_left_motor_a / self.max_velocity * 100) * self.delta_time + left_motor_a.velocity(PERCENT))
+        right_motor_a_target_velocity = clamp(right_motor_a_target_velocity, (max_acceleration_right_motor_a / self.max_velocity * 100) * self.delta_time + right_motor_a.velocity(
+            PERCENT), -(max_acceleration_right_motor_a / self.max_velocity * 100) * self.delta_time + right_motor_a.velocity(PERCENT))
+        left_motor_b_target_velocity = clamp(left_motor_b_target_velocity, (max_acceleration_left_motor_b / self.max_velocity * 100) * self.delta_time + left_motor_b.velocity(
+            PERCENT), -(max_acceleration_left_motor_b / self.max_velocity * 100) * self.delta_time + left_motor_b.velocity(PERCENT))
+        right_motor_b_target_velocity = clamp(right_motor_b_target_velocity, (max_acceleration_right_motor_b / self.max_velocity * 100) * self.delta_time + right_motor_b.velocity(
+            PERCENT), -(max_acceleration_right_motor_b / self.max_velocity * 100) * self.delta_time + right_motor_b.velocity(PERCENT))
+
+        # Accelerate the motors to the target velocity. 
+        left_motor_a.set_velocity(left_motor_a_target_velocity, PERCENT)
+        right_motor_a.set_velocity(right_motor_a_target_velocity, PERCENT)
+        left_motor_b.set_velocity(left_motor_b_target_velocity, PERCENT)
+        right_motor_b.set_velocity(right_motor_b_target_velocity, PERCENT)
+
+        # Display content
+        # print("left_motor_a_target_velocity ", left_motor_a_target_velocity)
+        # print("right_motor_a_target_velocity ", right_motor_a_target_velocity)
+        # print("left_motor_b_target_velocity ", left_motor_b_target_velocity)
+        # print("right_motor_b_target_velocity ", right_motor_b_target_velocity)
+        # print("")
+            
     
     def estimate_state(self):
         '''
@@ -403,14 +500,6 @@ class Robot(GameObject):
 
         self.total_x_from_encoders += delta_x_from_encoders
         self.total_y_from_encoders += delta_y_from_encoders
-
-        self.previous_wheel_encoder_values = self.get_current_wheel_encoder_values()
-
-        
-        
-
-
-
 
 ##### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ###
     def set_target_state(self, _state):
@@ -535,10 +624,8 @@ class Robot(GameObject):
 
         # Compute the position from the encoders, we get this by summing up the encoders based on if they contribute to the robot moving in one direction
         # and then divide it from the cm/deg coefficient which means that we turn the encoder values into cm, and we divide by 4 because there are 4 wheels
-        x_value = (encoders[0] - encoders[1] - encoders[2] + encoders[3]
-                   ) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2) / 4
-        y_value = (encoders[0] + encoders[1] + encoders[2] + encoders[3]
-                   ) / (self.wheel_distance_CM_to_DEG_coefficient * r2o2) / 4
+        x_value = (encoders[0] - encoders[1] - encoders[2] + encoders[3]) / 4 # / (self.wheel_distance_CM_to_DEG_coefficient * r2o2) / 4
+        y_value = (encoders[0] + encoders[1] + encoders[2] + encoders[3]) / 4 # / (self.wheel_distance_CM_to_DEG_coefficient * r2o2) / 4
         return x_value, y_value
 
     def get_position(self):
@@ -1132,6 +1219,7 @@ class Robot(GameObject):
 simple_path = [{ 'x' : 0.0, 'y' : 0.0},{ 'x' : 0.0, 'y' : 1.254751286449391},{ 'x' : 0.0, 'y' : 3.1368782161234776},{ 'x' : 0.0, 'y' : 5.64638078902226},{ 'x' : 0.0, 'y' : 8.783259005145766},{ 'x' : 0.0, 'y' : 11.292761578044576},{ 'x' : -0.6273756432246955, 'y' : 15.057015437392778},{ 'x' : -0.6273756432246955, 'y' : 18.82126929674098},{ 'x' : -0.6273756432246955, 'y' : 23.212898799313876},{ 'x' : 0.0, 'y' : 26.977152658662078},{ 'x' : 0.0, 'y' : 28.23190394511147},{ 'x' : 0.0, 'y' : 31.99615780445967},{ 'x' : 0.0, 'y' : 35.76041166380787},{ 'x' : 0.0, 'y' : 40.15204116638077},{ 'x' : 0.0, 'y' : 44.543670668953666},{ 'x' : 0.627375643224724, 'y' : 47.05317324185248},{ 'x' : 0.627375643224724, 'y' : 50.81742710120065},{ 'x' : 1.2547512864494195, 'y' : 55.20905660377355},{ 'x' : 1.2547512864494195, 'y' : 58.97331046312175},{ 'x' : 1.2547512864494195, 'y' : 62.110188679245255},{ 'x' : 1.2547512864494195, 'y' : 66.50181818181815},{ 'x' : 1.882126929674115, 'y' : 70.26607204116635},{ 'x' : 1.882126929674115, 'y' : 74.65770154373925},{ 'x' : 1.882126929674115, 'y' : 78.42195540308745},{ 'x' : 1.882126929674115, 'y' : 82.18620926243565},{ 'x' : 2.5095025728988105, 'y' : 85.32308747855916},{ 'x' : 2.5095025728988105, 'y' : 89.08734133790736},{ 'x' : 3.7642538593482016, 'y' : 92.85159519725556},{ 'x' : 4.391629502572897, 'y' : 95.98847341337904},{ 'x' : 5.019005145797621, 'y' : 99.12535162950255},{ 'x' : 5.6463807890223165, 'y' : 101.63485420240136},{ 'x' : 6.273756432247012, 'y' : 104.14435677530014},{ 'x' : 6.901132075471708, 'y' : 107.28123499142364},{ 'x' : 8.155883361921099, 'y' : 109.16336192109776},{ 'x' : 10.038010291595214, 'y' : 111.04548885077185},{ 'x' : 11.292761578044605, 'y' : 112.92761578044596},{ 'x' : 12.547512864493996, 'y' : 114.18236706689535},{ 'x' : 14.42963979416811, 'y' : 116.06449399656944},{ 'x' : 16.311766723842197, 'y' : 117.31924528301886},{ 'x' : 18.193893653516312, 'y' : 117.94662092624355},{ 'x' : 20.0760205831904, 'y' : 119.20137221269295},{ 'x' : 21.33077186963982, 'y' : 119.20137221269295},{ 'x' : 23.8402744425386, 'y' : 119.82874785591764},{ 'x' : 25.722401372212715, 'y' : 119.82874785591764},{ 'x' : 27.604528301886802, 'y' : 119.82874785591764},{ 'x' : 29.486655231560917, 'y' : 119.82874785591764},{ 'x' : 31.368782161235004, 'y' : 119.82874785591764},{ 'x' : 33.25090909090909, 'y' : 119.20137221269295},{ 'x' : 34.50566037735851, 'y' : 118.57399656946825},{ 'x' : 35.7604116638079, 'y' : 117.94662092624355},{ 'x' : 37.01516295025729, 'y' : 117.31924528301886},{ 'x' : 38.89728987993141, 'y' : 116.06449399656944},{ 'x' : 39.5246655231561, 'y' : 114.18236706689535},{ 'x' : 40.1520411663808, 'y' : 112.30024013722124},{ 'x' : 41.40679245283019, 'y' : 109.79073756432246},{ 'x' : 42.03416809605491, 'y' : 107.28123499142364},{ 'x' : 42.66154373927961, 'y' : 104.77173241852486},{ 'x' : 43.288919382504304, 'y' : 101.63485420240136},{ 'x' : 43.916295025729, 'y' : 99.12535162950255},{ 'x' : 44.543670668953695, 'y' : 95.98847341337904},{ 'x' : 45.17104631217839, 'y' : 91.59684391080614},{ 'x' : 45.17104631217839, 'y' : 88.45996569468267},{ 'x' : 45.17104631217839, 'y' : 85.32308747855916},{ 'x' : 45.17104631217839, 'y' : 81.55883361921096},{ 'x' : 45.17104631217839, 'y' : 78.42195540308745},{ 'x' : 45.17104631217839, 'y' : 73.40295025728986},{ 'x' : 44.543670668953695, 'y' : 70.26607204116635},{ 'x' : 44.543670668953695, 'y' : 66.50181818181815},{ 'x' : 44.543670668953695, 'y' : 63.99231560891937},{ 'x' : 44.543670668953695, 'y' : 60.855437392795864},{ 'x' : 43.916295025729, 'y' : 58.34593481989705},{ 'x' : 43.916295025729, 'y' : 54.58168096054885},{ 'x' : 43.916295025729, 'y' : 52.07217838765007},{ 'x' : 43.288919382504304, 'y' : 49.56267581475126},{ 'x' : 43.916295025729, 'y' : 47.05317324185248},{ 'x' : 43.916295025729, 'y' : 45.17104631217836},{ 'x' : 43.916295025729, 'y' : 43.288919382504275},{ 'x' : 43.288919382504304, 'y' : 41.40679245283016},{ 'x' : 43.288919382504304, 'y' : 38.89728987993138},{ 'x' : 43.288919382504304, 'y' : 37.01516295025726},{ 'x' : 43.288919382504304, 'y' : 34.50566037735845},{ 'x' : 43.288919382504304, 'y' : 32.623533447684366},{ 'x' : 42.66154373927961, 'y' : 30.74140651801028},{ 'x' : 42.66154373927961, 'y' : 29.48665523156086},{ 'x' : 43.288919382504304, 'y' : 26.977152658662078},{ 'x' : 43.288919382504304, 'y' : 25.72240137221266},{ 'x' : 43.288919382504304, 'y' : 23.840274442538572},{ 'x' : 43.288919382504304, 'y' : 22.58552315608918},{ 'x' : 43.288919382504304, 'y' : 21.33077186963976},{ 'x' : 43.288919382504304, 'y' : 20.07602058319037},{ 'x' : 43.288919382504304, 'y' : 18.82126929674098},{ 'x' : 43.288919382504304, 'y' : 17.56651801029156},{ 'x' : 43.288919382504304, 'y' : 15.057015437392778},{ 'x' : 43.916295025729, 'y' : 13.174888507718663},{ 'x' : 43.916295025729, 'y' : 11.920137221269272},{ 'x' : 44.543670668953695, 'y' : 10.66538593481988},{ 'x' : 45.17104631217839, 'y' : 9.410634648370461},{ 'x' : 46.42579759862781, 'y' : 7.528507718696375},{ 'x' : 48.307924528301896, 'y' : 6.901132075471679},{ 'x' : 49.56267581475129, 'y' : 6.273756432246984},{ 'x' : 51.4448027444254, 'y' : 5.64638078902226},{ 'x' : 53.954305317324184, 'y' : 5.019005145797564},{ 'x' : 55.209056603773604, 'y' : 5.019005145797564},{ 'x' : 57.09118353344769, 'y' : 5.019005145797564},{ 'x' : 58.973310463121805, 'y' : 5.64638078902226},{ 'x' : 60.2280617495712, 'y' : 5.64638078902226},{ 'x' : 62.73756432247001, 'y' : 6.901132075471679},{ 'x' : 63.9923156089194, 'y' : 8.15588336192107},{ 'x' : 65.87444253859348, 'y' : 9.410634648370461},{ 'x' : 68.3839451114923, 'y' : 11.920137221269272},{ 'x' : 69.63869639794169, 'y' : 14.429639794168082},{ 'x' : 70.8934476843911, 'y' : 16.939142367066864},{ 'x' : 72.1481989708405, 'y' : 20.07602058319037},{ 'x' : 73.40295025728989, 'y' : 23.212898799313876},{ 'x' : 74.03032590051458, 'y' : 26.349777015437354},{ 'x' : 74.65770154373931, 'y' : 30.114030874785556},{ 'x' : 75.285077186964, 'y' : 33.87828473413376},{ 'x' : 75.9124528301887, 'y' : 38.269914236706654},{ 'x' : 76.5398284734134, 'y' : 41.40679245283016},{ 'x' : 77.16720411663809, 'y' : 45.79842195540306},{ 'x' : 77.16720411663809, 'y' : 49.56267581475126},{ 'x' : 77.79457975986278, 'y' : 53.954305317324156},{ 'x' : 78.42195540308748, 'y' : 57.71855917667236},{ 'x' : 78.42195540308748, 'y' : 60.855437392795864},{ 'x' : 79.0493310463122, 'y' : 64.61969125214407},{ 'x' : 79.0493310463122, 'y' : 67.75656946826757},{ 'x' : 79.0493310463122, 'y' : 70.26607204116635},{ 'x' : 79.0493310463122, 'y' : 72.77557461406516},{ 'x' : 78.42195540308748, 'y' : 75.91245283018867},{ 'x' : 78.42195540308748, 'y' : 79.04933104631215},{ 'x' : 78.42195540308748, 'y' : 81.55883361921096},{ 'x' : 77.79457975986278, 'y' : 84.06833619210974},{ 'x' : 77.79457975986278, 'y' : 86.57783876500855},{ 'x' : 78.42195540308748, 'y' : 89.08734133790736},{ 'x' : 78.42195540308748, 'y' : 90.34209262435675},{ 'x' : 78.42195540308748, 'y' : 92.85159519725556},{ 'x' : 79.0493310463122, 'y' : 95.36109777015434},{ 'x' : 79.0493310463122, 'y' : 97.87060034305316},{ 'x' : 79.0493310463122, 'y' : 99.75272727272724},{ 'x' : 79.0493310463122, 'y' : 101.63485420240136},{ 'x' : 79.6767066895369, 'y' : 102.88960548885075},{ 'x' : 79.6767066895369, 'y' : 105.39910806174956},{ 'x' : 79.6767066895369, 'y' : 107.28123499142364},{ 'x' : 79.6767066895369, 'y' : 109.16336192109776},{ 'x' : 80.3040823327616, 'y' : 111.04548885077185},{ 'x' : 80.3040823327616, 'y' : 112.30024013722124},{ 'x' : 80.93145797598629, 'y' : 114.18236706689535},{ 'x' : 81.55883361921099, 'y' : 116.06449399656944},{ 'x' : 82.18620926243568, 'y' : 117.31924528301886},{ 'x' : 83.4409605488851, 'y' : 118.57399656946825},{ 'x' : 84.69571183533449, 'y' : 119.82874785591764},{ 'x' : 86.57783876500858, 'y' : 120.45612349914234},{ 'x' : 88.4599656946827, 'y' : 121.08349914236703},{ 'x' : 90.34209262435678, 'y' : 121.08349914236703},{ 'x' : 92.85159519725559, 'y' : 121.71087478559176},{ 'x' : 95.3610977701544, 'y' : 121.71087478559176},{ 'x' : 99.12535162950257, 'y' : 121.08349914236703},{ 'x' : 101.63485420240139, 'y' : 120.45612349914234},{ 'x' : 104.1443567753002, 'y' : 120.45612349914234},{ 'x' : 107.28123499142367, 'y' : 119.20137221269295},{ 'x' : 109.79073756432248, 'y' : 118.57399656946825},{ 'x' : 112.3002401372213, 'y' : 117.31924528301886},{ 'x' : 114.18236706689538, 'y' : 116.06449399656944},{ 'x' : 115.43711835334477, 'y' : 114.80974271012005},{ 'x' : 116.69186963979419, 'y' : 113.55499142367066},{ 'x' : 119.20137221269297, 'y' : 110.41811320754715},{ 'x' : 120.4561234991424, 'y' : 107.90861063464834},{ 'x' : 121.08349914236709, 'y' : 105.39910806174956},{ 'x' : 121.08349914236709, 'y' : 102.26222984562605},{ 'x' : 121.71087478559178, 'y' : 98.49797598627785},{ 'x' : 121.71087478559178, 'y' : 96.61584905660376},{ 'x' : 122.33825042881648, 'y' : 92.22421955403084},{ 'x' : 122.33825042881648, 'y' : 88.45996569468267},{ 'x' : 121.71087478559178, 'y' : 85.32308747855916},{ 'x' : 121.71087478559178, 'y' : 81.55883361921096},{ 'x' : 121.71087478559178, 'y' : 78.42195540308745},{ 'x' : 121.08349914236709, 'y' : 73.40295025728986},{ 'x' : 121.08349914236709, 'y' : 69.63869639794166},{ 'x' : 121.08349914236709, 'y' : 65.87444253859346},{ 'x' : 121.08349914236709, 'y' : 61.48281303602056},{ 'x' : 120.4561234991424, 'y' : 56.46380789022297},{ 'x' : 120.4561234991424, 'y' : 52.699554030874765},{ 'x' : 120.4561234991424, 'y' : 48.93530017152656},{ 'x' : 120.4561234991424, 'y' : 45.17104631217836},{ 'x' : 120.4561234991424, 'y' : 41.40679245283016},{ 'x' : 120.4561234991424, 'y' : 37.64253859348196},{ 'x' : 120.4561234991424, 'y' : 33.87828473413376},{ 'x' : 120.4561234991424, 'y' : 31.368782161234975},{ 'x' : 120.4561234991424, 'y' : 28.859279588336165},{ 'x' : 120.4561234991424, 'y' : 26.349777015437354},{ 'x' : 120.4561234991424, 'y' : 23.840274442538572},{ 'x' : 120.4561234991424, 'y' : 21.958147512864457},{ 'x' : 120.4561234991424, 'y' : 20.703396226415066},{ 'x' : 120.4561234991424, 'y' : 19.448644939965675},{ 'x' : 120.4561234991424, 'y' : 18.193893653516284},{ 'x' : 120.4561234991424, 'y' : 16.939142367066864},{ 'x' : 120.4561234991424, 'y' : 15.684391080617473},{ 'x' : 120.4561234991424, 'y' : 14.429639794168082},{ 'x' : 120.4561234991424, 'y' : 13.174888507718663},{ 'x' : 120.4561234991424, 'y' : 11.920137221269272},{ 'x' : 119.82874785591767, 'y' : 10.66538593481988},{ 'x' : 118.57399656946828, 'y' : 10.66538593481988},{ 'x' : 116.69186963979419, 'y' : 9.410634648370461},{ 'x' : 114.80974271012008, 'y' : 8.783259005145766},{ 'x' : 112.3002401372213, 'y' : 8.15588336192107},{ 'x' : 109.16336192109779, 'y' : 6.901132075471679},{ 'x' : 106.02648370497428, 'y' : 6.901132075471679},{ 'x' : 102.26222984562608, 'y' : 5.64638078902226},{ 'x' : 97.87060034305318, 'y' : 5.019005145797564},{ 'x' : 92.85159519725559, 'y' : 4.391629502572869},{ 'x' : 87.2052144082333, 'y' : 3.1368782161234776},{ 'x' : 82.18620926243568, 'y' : 3.1368782161234776},{ 'x' : 75.9124528301887, 'y' : 1.8821269296740866},{ 'x' : 70.26607204116638, 'y' : 1.254751286449391},{ 'x' : 64.6196912521441, 'y' : 1.254751286449391},{ 'x' : 58.34593481989711, 'y' : 0.6273756432246955},{ 'x' : 53.32692967409949, 'y' : 0.6273756432246955},{ 'x' : 48.307924528301896, 'y' : 0.6273756432246955},{ 'x' : 42.66154373927961, 'y' : 0.6273756432246955},{ 'x' : 37.01516295025729, 'y' : 0.6273756432246955},{ 'x' : 31.9961578044597, 'y' : 0.6273756432246955},{ 'x' : 29.486655231560917, 'y' : 0.6273756432246955},{ 'x' : 25.09502572898799, 'y' : 0.0},{ 'x' : 21.33077186963982, 'y' : 0.6273756432246955},{ 'x' : 16.939142367066893, 'y' : 0.6273756432246955},{ 'x' : 15.057015437392806, 'y' : 0.6273756432246955},{ 'x' : 11.9201372212693, 'y' : 0.6273756432246955},{ 'x' : 8.783259005145823, 'y' : 0.6273756432246955},{ 'x' : 5.6463807890223165, 'y' : 0.6273756432246955},{ 'x' : 3.136878216123506, 'y' : 0.0},{ 'x' : 1.882126929674115, 'y' : 0.0},]
 straight_line = [{ 'x' : 0.0, 'y' : 0.0},{ 'x' : -0.6273756432246955, 'y' : 8.155883361921099},{ 'x' : -0.6273756432246955, 'y' : 15.057015437392778},{ 'x' : -1.2547512864494053, 'y' : 25.09502572898799},{ 'x' : -1.8821269296741008, 'y' : 36.38778730703257},{ 'x' : -3.136878216123506, 'y' : 46.42579759862778},{ 'x' : -3.136878216123506, 'y' : 55.209056603773575},{ 'x' : -3.7642538593482016, 'y' : 62.73756432246998},{ 'x' : -3.7642538593482016, 'y' : 69.01132075471696},{ 'x' : -3.136878216123506, 'y' : 73.40295025728986},]
 mostyn = [{ 'x' : 0.0, 'y' : 0.0},{ 'x' : -0.63, 'y' : 4.39},{ 'x' : 0.0, 'y' : 10.04},{ 'x' : 0.0, 'y' : 13.8},{ 'x' : 0.0, 'y' : 20.08},{ 'x' : 0.63, 'y' : 32.0},{ 'x' : 1.25, 'y' : 42.66},{ 'x' : 1.88, 'y' : 53.95},{ 'x' : 1.88, 'y' : 63.36},{ 'x' : 1.88, 'y' : 72.78},{ 'x' : 1.88, 'y' : 80.3},{ 'x' : 1.25, 'y' : 87.21},{ 'x' : 0.63, 'y' : 93.48},{ 'x' : -0.63, 'y' : 99.13},{ 'x' : -1.88, 'y' : 104.77},{ 'x' : -2.51, 'y' : 110.42},{ 'x' : -3.76, 'y' : 116.06},{ 'x' : -4.39, 'y' : 122.34},{ 'x' : -5.02, 'y' : 127.98},{ 'x' : -5.02, 'y' : 134.26},{ 'x' : -5.02, 'y' : 140.53},{ 'x' : -4.39, 'y' : 146.18},{ 'x' : -4.39, 'y' : 151.2},{ 'x' : -3.76, 'y' : 156.84},{ 'x' : -3.14, 'y' : 161.24},{ 'x' : -3.14, 'y' : 162.49},{ 'x' : -3.14, 'y' : 163.75},{ 'x' : -3.14, 'y' : 165.0},{ 'x' : -3.14, 'y' : 166.25},{ 'x' : -3.14, 'y' : 167.51},{ 'x' : -3.14, 'y' : 168.76},{ 'x' : -1.25, 'y' : 170.02},{ 'x' : 0.63, 'y' : 171.27},{ 'x' : 3.76, 'y' : 171.9},{ 'x' : 6.9, 'y' : 173.16},{ 'x' : 11.29, 'y' : 173.78},{ 'x' : 16.31, 'y' : 175.04},{ 'x' : 21.33, 'y' : 176.29},{ 'x' : 26.98, 'y' : 176.92},{ 'x' : 32.62, 'y' : 178.17},{ 'x' : 42.66, 'y' : 178.8},{ 'x' : 50.19, 'y' : 180.06},{ 'x' : 60.23, 'y' : 180.06},{ 'x' : 63.99, 'y' : 180.06},{ 'x' : 72.15, 'y' : 180.06},{ 'x' : 79.68, 'y' : 178.8},{ 'x' : 85.95, 'y' : 176.92},{ 'x' : 92.85, 'y' : 174.41},{ 'x' : 98.5, 'y' : 171.27},{ 'x' : 101.01, 'y' : 169.39},{ 'x' : 106.03, 'y' : 165.63},{ 'x' : 111.05, 'y' : 161.24},{ 'x' : 115.44, 'y' : 156.84},{ 'x' : 119.83, 'y' : 151.82},{ 'x' : 124.22, 'y' : 146.81},{ 'x' : 127.98, 'y' : 141.79},{ 'x' : 131.12, 'y' : 136.77},{ 'x' : 134.26, 'y' : 131.12},{ 'x' : 136.77, 'y' : 125.48},{ 'x' : 139.28, 'y' : 119.83},{ 'x' : 141.79, 'y' : 114.18},{ 'x' : 143.67, 'y' : 108.54},{ 'x' : 145.55, 'y' : 102.26},{ 'x' : 146.81, 'y' : 95.99},{ 'x' : 147.43, 'y' : 90.34},{ 'x' : 147.43, 'y' : 82.81},{ 'x' : 146.81, 'y' : 75.91},{ 'x' : 146.18, 'y' : 67.76},{ 'x' : 143.67, 'y' : 59.6},{ 'x' : 139.9, 'y' : 51.44},{ 'x' : 135.51, 'y' : 42.66},{ 'x' : 131.12, 'y' : 34.51},{ 'x' : 126.1, 'y' : 26.98},{ 'x' : 120.46, 'y' : 20.08},{ 'x' : 114.81, 'y' : 13.8},{ 'x' : 109.16, 'y' : 8.78},{ 'x' : 106.65, 'y' : 6.27},{ 'x' : 100.38, 'y' : 1.88},{ 'x' : 94.11, 'y' : -1.25},{ 'x' : 88.46, 'y' : -3.76},{ 'x' : 82.19, 'y' : -5.65},{ 'x' : 75.29, 'y' : -6.27},{ 'x' : 72.15, 'y' : -6.9},{ 'x' : 65.25, 'y' : -6.27},{ 'x' : 58.97, 'y' : -5.65},{ 'x' : 52.07, 'y' : -4.39},{ 'x' : 45.8, 'y' : -3.76},{ 'x' : 39.52, 'y' : -1.88},{ 'x' : 33.25, 'y' : -0.63},{ 'x' : 26.98, 'y' : 0.63},{ 'x' : 21.33, 'y' : 2.51},{ 'x' : 16.31, 'y' : 4.39},{ 'x' : 11.29, 'y' : 5.65},{ 'x' : 6.9, 'y' : 6.27},]
+revamping_everthing = [{ 'x' : 0.0, 'y' : 0.0},{ 'x' : 0.0, 'y' : 1.88},{ 'x' : -0.63, 'y' : 3.14},{ 'x' : -0.63, 'y' : 4.39},{ 'x' : -0.63, 'y' : 6.27},{ 'x' : -1.25, 'y' : 7.53},{ 'x' : -1.25, 'y' : 10.67},{ 'x' : -1.88, 'y' : 13.8},{ 'x' : -1.88, 'y' : 22.59},{ 'x' : -1.88, 'y' : 28.23},{ 'x' : -2.51, 'y' : 35.76},{ 'x' : -2.51, 'y' : 41.41},{ 'x' : -3.14, 'y' : 47.05},{ 'x' : -2.51, 'y' : 52.07},{ 'x' : -1.88, 'y' : 56.46},{ 'x' : -1.25, 'y' : 60.86},{ 'x' : -0.63, 'y' : 64.62},{ 'x' : 0.0, 'y' : 69.01},{ 'x' : 0.63, 'y' : 72.78},{ 'x' : 0.63, 'y' : 77.79},{ 'x' : 1.88, 'y' : 80.93},{ 'x' : 2.51, 'y' : 82.81},{ 'x' : 3.76, 'y' : 85.32},{ 'x' : 5.65, 'y' : 87.21},{ 'x' : 7.53, 'y' : 90.34},{ 'x' : 9.41, 'y' : 91.6},{ 'x' : 10.67, 'y' : 93.48},{ 'x' : 11.92, 'y' : 94.11},{ 'x' : 13.8, 'y' : 94.73},{ 'x' : 15.06, 'y' : 95.36},{ 'x' : 16.31, 'y' : 95.99},{ 'x' : 17.57, 'y' : 95.99},{ 'x' : 18.82, 'y' : 95.99},{ 'x' : 20.08, 'y' : 95.99},{ 'x' : 21.33, 'y' : 95.36},{ 'x' : 22.59, 'y' : 94.73},{ 'x' : 24.47, 'y' : 94.11},{ 'x' : 25.72, 'y' : 92.85},{ 'x' : 27.6, 'y' : 90.97},{ 'x' : 27.6, 'y' : 89.71},{ 'x' : 28.86, 'y' : 88.46},{ 'x' : 29.49, 'y' : 86.58},{ 'x' : 30.11, 'y' : 84.7},{ 'x' : 30.11, 'y' : 82.19},{ 'x' : 30.74, 'y' : 80.93},{ 'x' : 31.37, 'y' : 78.42},{ 'x' : 31.37, 'y' : 75.29},{ 'x' : 32.0, 'y' : 72.78},{ 'x' : 32.62, 'y' : 69.64},{ 'x' : 32.62, 'y' : 65.87},{ 'x' : 32.62, 'y' : 62.11},{ 'x' : 32.62, 'y' : 57.72},{ 'x' : 32.62, 'y' : 52.7},{ 'x' : 33.25, 'y' : 49.56},{ 'x' : 33.25, 'y' : 47.68},{ 'x' : 33.25, 'y' : 43.92},{ 'x' : 33.25, 'y' : 40.15},{ 'x' : 33.88, 'y' : 34.51},{ 'x' : 33.88, 'y' : 30.74},{ 'x' : 33.88, 'y' : 26.98},{ 'x' : 33.88, 'y' : 24.47},{ 'x' : 33.88, 'y' : 20.7},{ 'x' : 33.88, 'y' : 16.31},{ 'x' : 34.51, 'y' : 12.55},{ 'x' : 34.51, 'y' : 10.04},{ 'x' : 35.13, 'y' : 7.53},{ 'x' : 35.76, 'y' : 5.65},{ 'x' : 36.39, 'y' : 3.76},{ 'x' : 37.64, 'y' : 2.51},{ 'x' : 38.9, 'y' : 0.0},{ 'x' : 39.52, 'y' : -1.88},{ 'x' : 40.78, 'y' : -2.51},{ 'x' : 42.66, 'y' : -3.76},{ 'x' : 44.54, 'y' : -5.02},{ 'x' : 47.05, 'y' : -6.27},{ 'x' : 48.94, 'y' : -6.9},{ 'x' : 53.33, 'y' : -5.65},{ 'x' : 57.09, 'y' : -5.02},{ 'x' : 58.35, 'y' : -3.76},{ 'x' : 59.6, 'y' : -2.51},{ 'x' : 60.86, 'y' : -1.25},{ 'x' : 62.74, 'y' : 1.88},{ 'x' : 63.99, 'y' : 3.76},{ 'x' : 65.25, 'y' : 6.9},{ 'x' : 65.87, 'y' : 10.67},{ 'x' : 67.13, 'y' : 14.43},{ 'x' : 67.13, 'y' : 16.31},{ 'x' : 68.38, 'y' : 20.08},{ 'x' : 68.38, 'y' : 25.1},{ 'x' : 69.01, 'y' : 29.49},{ 'x' : 69.64, 'y' : 34.51},{ 'x' : 70.27, 'y' : 39.52},{ 'x' : 70.89, 'y' : 45.8},{ 'x' : 70.89, 'y' : 48.94},{ 'x' : 71.52, 'y' : 54.58},{ 'x' : 73.4, 'y' : 65.25},{ 'x' : 73.4, 'y' : 73.4},{ 'x' : 74.66, 'y' : 82.81},{ 'x' : 74.66, 'y' : 90.34},{ 'x' : 75.91, 'y' : 97.24},{ 'x' : 76.54, 'y' : 102.26},{ 'x' : 77.17, 'y' : 107.28},{ 'x' : 77.79, 'y' : 108.54},{ 'x' : 78.42, 'y' : 107.28},{ 'x' : 80.3, 'y' : 106.65},{ 'x' : 82.19, 'y' : 106.03},{ 'x' : 84.07, 'y' : 106.65},{ 'x' : 86.58, 'y' : 106.65},{ 'x' : 89.09, 'y' : 106.03},{ 'x' : 91.6, 'y' : 106.03},{ 'x' : 94.11, 'y' : 105.4},{ 'x' : 95.36, 'y' : 105.4},{ 'x' : 97.87, 'y' : 104.77},{ 'x' : 100.38, 'y' : 104.14},{ 'x' : 102.26, 'y' : 103.52},{ 'x' : 104.14, 'y' : 102.26},{ 'x' : 106.03, 'y' : 101.01},{ 'x' : 107.28, 'y' : 100.38},{ 'x' : 109.16, 'y' : 98.5},{ 'x' : 110.42, 'y' : 96.62},{ 'x' : 111.67, 'y' : 94.11},{ 'x' : 112.3, 'y' : 92.85},{ 'x' : 112.93, 'y' : 90.97},{ 'x' : 113.55, 'y' : 89.09},{ 'x' : 114.18, 'y' : 87.83},{ 'x' : 114.18, 'y' : 85.95},{ 'x' : 114.81, 'y' : 84.7},{ 'x' : 115.44, 'y' : 82.19},{ 'x' : 115.44, 'y' : 80.93},{ 'x' : 115.44, 'y' : 79.68},{ 'x' : 115.44, 'y' : 76.54},{ 'x' : 115.44, 'y' : 74.03},{ 'x' : 115.44, 'y' : 70.89},{ 'x' : 115.44, 'y' : 67.13},{ 'x' : 114.81, 'y' : 63.36},{ 'x' : 114.81, 'y' : 58.97},{ 'x' : 114.18, 'y' : 55.21},{ 'x' : 113.55, 'y' : 51.44},{ 'x' : 113.55, 'y' : 48.31},{ 'x' : 113.55, 'y' : 45.8},{ 'x' : 113.55, 'y' : 44.54},{ 'x' : 112.93, 'y' : 40.78},{ 'x' : 112.93, 'y' : 38.9},{ 'x' : 112.93, 'y' : 36.39},{ 'x' : 112.93, 'y' : 34.51},{ 'x' : 112.93, 'y' : 32.62},{ 'x' : 112.93, 'y' : 30.74},{ 'x' : 112.93, 'y' : 28.86},{ 'x' : 112.3, 'y' : 26.98},{ 'x' : 112.93, 'y' : 25.1},{ 'x' : 112.93, 'y' : 23.21},{ 'x' : 112.93, 'y' : 21.96},{ 'x' : 113.55, 'y' : 20.08},{ 'x' : 113.55, 'y' : 18.82},{ 'x' : 113.55, 'y' : 17.57},{ 'x' : 113.55, 'y' : 16.31},{ 'x' : 113.55, 'y' : 15.06},{ 'x' : 114.18, 'y' : 13.8},{ 'x' : 114.18, 'y' : 12.55},{ 'x' : 114.18, 'y' : 11.29},{ 'x' : 114.18, 'y' : 10.04},{ 'x' : 114.18, 'y' : 8.78},{ 'x' : 114.18, 'y' : 7.53},{ 'x' : 113.55, 'y' : 6.27},{ 'x' : 113.55, 'y' : 5.02},{ 'x' : 111.67, 'y' : 3.76},{ 'x' : 107.28, 'y' : 2.51},{ 'x' : 104.77, 'y' : 1.88},{ 'x' : 97.24, 'y' : 0.63},{ 'x' : 92.85, 'y' : 0.63},{ 'x' : 89.71, 'y' : 0.63},{ 'x' : 80.93, 'y' : 0.63},{ 'x' : 78.42, 'y' : 0.63},{ 'x' : 69.01, 'y' : 0.63},{ 'x' : 60.86, 'y' : 0.63},{ 'x' : 53.95, 'y' : 1.88},{ 'x' : 46.43, 'y' : 2.51},{ 'x' : 40.15, 'y' : 3.76},{ 'x' : 33.88, 'y' : 5.02},{ 'x' : 27.6, 'y' : 5.65},{ 'x' : 21.33, 'y' : 6.27},{ 'x' : 15.68, 'y' : 6.27},{ 'x' : 9.41, 'y' : 6.9},{ 'x' : 3.76, 'y' : 6.27},{ 'x' : -1.88, 'y' : 5.65},{ 'x' : -5.65, 'y' : 5.65},{ 'x' : -9.41, 'y' : 5.02},]
 
 # END OF PATHS ######### END OF PATHS ######### END OF PATHS ######### END OF PATHS ######### END OF PATHS
 
@@ -1159,7 +1247,7 @@ def get_angle_to_object(gameobject_1, gameobject_2):
 
 def autonomous():
     # init() # Init a second time (Hopefully to fix the problem with the motors breaking for some reason)
-    r.run_autonomous(mostyn)
+    r.run_autonomous(simple_path)
     r.stop_moving()
 
 def driver_control():
@@ -1174,14 +1262,17 @@ def driver_control():
 
     r.autonomous_timer.reset()
 
-
     while True:
         # Update the robot's information
-        # r.set_target_state(
-        #     {
-        #         ""
-        #     }
-        # )
+        
+        r.set_target_state(
+            {
+                "x_vel" : controller_1.axis4.position(),
+                "y_vel" : controller_1.axis3.position(),
+                "theta_vel" : controller_1.axis1.position(),
+                "slow_mode" : controller_1.buttonR1.pressing(),
+            }
+        )
         r.update()
 
         # Timer to print things out to the terminal every x seconds
@@ -1192,10 +1283,10 @@ def driver_control():
             timer.reset()
 
         # robot axis are based on x, y, and r vectors
-        r.drive(controller_1.axis4.position(), controller_1.axis3.position(),
-                controller_1.axis1.position(), False, True)
+        # r.drive(controller_1.axis4.position(), controller_1.axis3.position(),
+        #         controller_1.axis1.position(), False, True)
             
-        r.slow_mode = controller_1.buttonR2.pressing()
+        # r.slow_mode = controller_1.buttonR2.pressing()
 
         # Run the intake subsystem, set the desired speed
         # r.intake(controller_1.axis2.position())
@@ -1211,24 +1302,14 @@ def driver_control():
         elif controller_1.buttonRight.pressing():
             r.set_flywheel_speed(33)
         
-        if controller_1.buttonA.pressing():
-            shooter_thread = Thread(r.shoot_disk)
+        # if controller_1.buttonA.pressing():
+        #     shooter_thread = Thread(r.shoot_disk)
 
         if controller_1.buttonR1.pressing() and not r.is_shooting:
             r.shoot_disk()
 
-        if controller_1.buttonL2.pressing():
-            r.spin_roller_forward()
-
-        if controller_1.buttonR2.pressing():
-            r.spin_roller_backward()
-
-        if not (controller_1.buttonR2.pressing() or controller_1.buttonL2.pressing()):
-            roller_motor.set_velocity(0, PERCENT)
-
         if not controller_1.buttonX.pressing():
             reset_theta_timer.reset()
-
 
         # If someone has pressed button x for more than 1 second, reset the orientaiton
         if reset_theta_timer.value() > 1:
@@ -1236,7 +1317,6 @@ def driver_control():
             r.reset_theta()
             reset_theta_timer.reset()
 
-        
         if controller_1.buttonB.pressing():
             r.print_debug_info()
 
@@ -1323,14 +1403,18 @@ driver_control()
 
 ##! PRIORITY
 # TODO: Revamp the driving command to work with go_to_position and inputting position and rotation vectors 
+# TODO: Theoretically, shouldn't max acceleration half if we're close to 0 for the motor speed? rework that function
 # TODO: Make a spin to command heading
 # TODO: Make a better pose/orienation initialization/resetting tool (initialize the position in the init() command, don't worry if we can't init yet)
 # TODO: Use sensor fusion with Kalman filter for better position
 # TODO: Make it os that the we init the robots orientation based off othe GPS (round it to the nearest 90 or 45 degrees), but make it so that drone mode still works
 # TODO: Use the gps and figure out how precise it is
 # TODO: Make pid for 
+# TODO: Experiment not waiting in self.position_update()
+# TODO: Make odometry consistent with real world measurements
 
 # * IMPORTANT
+# TODO: Instead of rotating the driver control vector based off of the current theta, why not move it based off of the predicted theta/halfway between the two? this might remove the drifting that happens when rotation while moving
 # TODO: test out the custom robot print function
 # TODO: Work with david and figure out how to make robot driving feel better (more responsive, smooth, etc.)
 # TODO: Figure out variance in GPS sensor data and variance in model (Q and R)
