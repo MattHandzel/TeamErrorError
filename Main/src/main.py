@@ -506,12 +506,10 @@ class Robot(GameObject):
         '''
         Updates the state of the robot
         '''
-        print("Before:", [z for z in self.target_state])
         # This makes it so that in case the new target state doesn't have a value, instead of just deleting that value, we don't change it
         for key in _state.keys():
             if key in self.state:
                 self.target_state[key] = _state[key]
-        print("After:", [z for z in self.target_state])
         self.update_constants()
     
     def update_constants(self):
@@ -1315,6 +1313,7 @@ def driver_control():
         if reset_theta_timer.value() > 1:
             print("Resetting the orientation of the robot!!")
             r.reset_theta()
+            controller_1.rumble("...")
             reset_theta_timer.reset()
 
         if controller_1.buttonB.pressing():
@@ -1396,8 +1395,8 @@ r.flywheel_motor_2_PID.set_constants(0.5,0.01,10)
 
 init()
 
-# autonomous()
-driver_control()
+autonomous()
+# driver_control()
 
 # competition = Competition(driver_control, autonomous)
 
