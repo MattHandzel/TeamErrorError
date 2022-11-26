@@ -211,9 +211,13 @@ class Robot(GameObject):
 
     previous_update_time: float = 0
 
+    wheel_gear_ratio = 18
+
     wheel_max_rpm: float = 200
     wheel_diameter_CM: float = 10.5
-    wheel_distance_CM_to_DEG_coefficient: float = 360 / \
+
+    # In order to get this, it is ticks for the specific gear ratio we're using divided by the circumeference of our wheel
+    wheel_distance_CM_to_TICK_coefficient: float = (wheel_gear_ratio / 6 * 300) / \
         (math.pi * wheel_diameter_CM)
 
     max_velocity: float
@@ -263,6 +267,12 @@ class Robot(GameObject):
 
     delta_time = 0
 
+    target_reached = False
+    position_tolerance = 3 # tolerance to target position in cm
+    orientation_tolerance = 8 # tolerance to target orientation in degrees
+    
+    red_goal = GameObject(0, 100)
+    blue_goal = GameObject(100, 0)
     # State dictionary will hold ALL information about the robot
     '''
     '''
@@ -294,6 +304,10 @@ class Robot(GameObject):
 
     target_state = {}
 
+    x_vel_PID = PID(0.1, 0, 0)
+    y_vel_PID = PID(0.1, 0, 0)
+    theta_vel_PID = PID(0.1, 0, 0)
+
     def __init__(self, x_pos=0, y_pos=0, theta=0):
         '''
         Initializes the robot class, computes the max velocity and acceleration
@@ -316,6 +330,12 @@ class Robot(GameObject):
 
         self.set_target_state(self.state)
         self.previous_state = self.state
+    
+    def init(self):
+        self.set_target_state(self.state)
+        self.previous_state = self.state
+        
+    
 
     def update(self):
         '''
@@ -330,7 +350,7 @@ class Robot(GameObject):
             return
         
         # Update the previous state before doing state estimation
-        self.previous_state = self.state
+        self.previous_state = self.state.copy()
         self.estimate_state()
 
 
@@ -343,17 +363,40 @@ class Robot(GameObject):
         '''
         Updates the position of the robot
         '''
+
         # These are the target position for each wheel, you find the target positions by finding the direction the wheels
         # are pointing in and then multiplying by the sin(theta) for the x and cos(theta) for theta
         # Speed towards target will be controlled by PID loop
         delta_x = self.target_state["x_pos"] - self.x_pos
         delta_y = self.target_state["y_pos"] - self.y_pos
         delta_theta = self.target_state["theta"] - self.theta
-        
-        target_x_vel = self.target_state["x_vel"]
-        target_y_vel = self.target_state["y_vel"]
-        target_theta_vel = self.target_state["theta_vel"]
 
+        # Turn via the shortest path
+        if delta_theta > 180:
+            delta_theta -= 360
+        elif delta_theta < -180:
+            delta_theta += 360
+
+        # target_x_vel = self.target_state["x_vel"]
+        # target_y_vel = self.target_state["y_vel"]
+        # target_theta_vel = self.target_state["theta_vel"]
+
+        delta_theta = math.sqrt(abs(delta_theta)) * sign(delta_theta) 
+        target_x_vel = ((clamp(delta_x, self.position_tolerance, -self.position_tolerance) * 100 / self.position_tolerance) ** 2) / 100 * sign(delta_x)
+        target_y_vel = ((clamp(delta_y, self.position_tolerance, -self.position_tolerance) * 100 / self.position_tolerance) ** 2) / 100 * sign(delta_y)
+        target_theta_vel = ((clamp(delta_theta, self.orientation_tolerance, -self.orientation_tolerance) * 100 / self.orientation_tolerance) ** 2) / 100 * sign(delta_theta)
+        
+        # target_theta_vel = clamp(target_theta_vel, 100, -100)
+        # target_x_vel = self.x_vel_PID.update(delta_x)
+        # target_y_vel = self.y_vel_PID.update(delta_y)
+        # target_theta_vel = self.theta_vel_PID.update(delta_theta)
+        
+        # target_x_vel = clamp(target_x_vel,100, -100)
+        # target_y_vel = clamp(target_y_vel,100, -100) 
+        # target_theta_vel = clamp(target_theta_vel,100, -100)
+
+        # print("target_x_vel: ", target_x_vel, "target_y_vel: ", target_y_vel, "target_theta_vel: ", target_theta_vel)
+        
         # # If we're close enough to the target, stop moving
         # if abs(delta_x) <= self.position_tolerance or abs(delta_y) <= self.position_tolerance:
         #     self.drive(0,0,self.target_state["theta_vel"])
@@ -451,7 +494,7 @@ class Robot(GameObject):
         self.theta_vel = inertial.gyro_rate(ZAXIS, VelocityUnits.DPS)
 
         # is a magic number that makes the gyro work better (experimentall I found that when the gyro reported that it spun 1 time, it actually overshot by about 3 degrees)
-        self.total_theta += self.theta_vel * self.delta_time / 0.99375
+        self.total_theta += self.theta_vel * self.delta_time / 0.99375 / 2
         self.theta = self.total_theta - (self.total_theta // 360 * 360)
         
         # Use encoders to get our x and y positions so that we can take the derivative and get our velocity
@@ -468,6 +511,7 @@ class Robot(GameObject):
         # Get the velocity of the robot in deg/s for 4 wheels
         self.x_vel = delta_x_from_encoders / self.delta_time
         self.y_vel = delta_y_from_encoders / self.delta_time
+
 
         # Velocity of robot from gps perspective
         x_from_gps = 0
@@ -501,6 +545,10 @@ class Robot(GameObject):
         self.total_x_from_encoders += delta_x_from_encoders
         self.total_y_from_encoders += delta_y_from_encoders
 
+        if abs(self.state["x_pos"] - self.target_state["x_pos"]) < self.position_tolerance and abs(self.state["y_pos"] - self.target_state["y_pos"]) < self.position_tolerance:
+            # print("TARGET STATE REACHED")
+            self.target_reached = True
+
 ##### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ###
     def set_target_state(self, _state):
         '''
@@ -510,7 +558,12 @@ class Robot(GameObject):
         for key in _state.keys():
             if key in self.state:
                 self.target_state[key] = _state[key]
+                
+                if key == "theta":
+                    self.target_state[key] = _state[key] % 360
+
         self.update_constants()
+        self.target_reached = False
     
     def update_constants(self):
         self.drone_mode = self.target_state["drone_mode"]
@@ -550,8 +603,10 @@ class Robot(GameObject):
         print("INPUT FROM SET_TEAM IS:\t", _color)
         if _color == "red":
             self.notBlue = True
+            self.goal = red_goal
             return
         elif _color == "blue":
+            self.goal = blue_goal
             self.notBlue = False
             return
         raise Exception("broo you dodn't set a proper team color")
@@ -622,8 +677,8 @@ class Robot(GameObject):
 
         # Compute the position from the encoders, we get this by summing up the encoders based on if they contribute to the robot moving in one direction
         # and then divide it from the cm/deg coefficient which means that we turn the encoder values into cm, and we divide by 4 because there are 4 wheels
-        x_value = (encoders[0] - encoders[1] - encoders[2] + encoders[3]) / 4 # / (self.wheel_distance_CM_to_DEG_coefficient * r2o2) / 4
-        y_value = (encoders[0] + encoders[1] + encoders[2] + encoders[3]) / 4 # / (self.wheel_distance_CM_to_DEG_coefficient * r2o2) / 4
+        x_value = (encoders[0] - encoders[1] - encoders[2] + encoders[3]) / (self.wheel_distance_CM_to_TICK_coefficient * r2o2) / 4
+        y_value = (encoders[0] + encoders[1] + encoders[2] + encoders[3]) / (self.wheel_distance_CM_to_TICK_coefficient * r2o2) / 4
         return x_value, y_value
 
     def get_position(self):
@@ -675,14 +730,14 @@ class Robot(GameObject):
             print("Done!") 
 
         else:
-            left_motor_a_target_position = delta_x * self.wheel_distance_CM_to_DEG_coefficient * \
-                r2o2 + delta_y * self.wheel_distance_CM_to_DEG_coefficient * r2o2
-            right_motor_a_target_position = -delta_x * self.wheel_distance_CM_to_DEG_coefficient * \
-                r2o2 + delta_y * self.wheel_distance_CM_to_DEG_coefficient * r2o2
-            left_motor_b_target_position = -delta_x * self.wheel_distance_CM_to_DEG_coefficient * \
-                r2o2 + delta_y * self.wheel_distance_CM_to_DEG_coefficient * r2o2
-            right_motor_b_target_position = delta_x * self.wheel_distance_CM_to_DEG_coefficient * \
-                r2o2 + delta_y * self.wheel_distance_CM_to_DEG_coefficient * r2o2
+            left_motor_a_target_position = delta_x * self.wheel_distance_CM_to_TICK_coefficient * \
+                r2o2 + delta_y * self.wheel_distance_CM_to_TICK_coefficient * r2o2
+            right_motor_a_target_position = -delta_x * self.wheel_distance_CM_to_TICK_coefficient * \
+                r2o2 + delta_y * self.wheel_distance_CM_to_TICK_coefficient * r2o2
+            left_motor_b_target_position = -delta_x * self.wheel_distance_CM_to_TICK_coefficient * \
+                r2o2 + delta_y * self.wheel_distance_CM_to_TICK_coefficient * r2o2
+            right_motor_b_target_position = delta_x * self.wheel_distance_CM_to_TICK_coefficient * \
+                r2o2 + delta_y * self.wheel_distance_CM_to_TICK_coefficient * r2o2
 
             # PID loop here for each wheel
             x_pos, y_pos = self.get_position()
@@ -751,40 +806,43 @@ class Robot(GameObject):
 
         '''
         # Update loop
-        t = Thread(self.forever_update)
         self.update()
-
         self.autonomous_timer.reset()
-
+        
         for step in procedure:
+            target_state = {
+                "x_vel" : 10,
+                "y_vel" : 10,
+            }
             if "setX" in step:
                 self.x_pos = step["setX"]
             if "setY" in step:
                 self.y_pos = step["setY"]
-            if "actions" in step.keys():
-                # if "shootDisk" in step["actions"]:
-                # r.shoot_disk()
-                if "unload" in step["actions"]:
-                    r.unload()
-                if "load" in step["actions"]:
-                    r.load()
-                if "stop_intake" in step["actions"]:
-                    r.stop_intake()
+            # if "actions" in step.keys():
+            #     if "unload" in step["actions"]:
+            #         r.unload()
+            #     if "load" in step["actions"]:
+            #         r.load()
+            #     if "stop_intake" in step["actions"]:
+            #         r.stop_intake()
 
-                if "spin_roller" in step["actions"]:
-                    r.spin_roller()
+            #     if "spin_roller" in step["actions"]:
+            #         r.spin_roller()
 
             if "message" in step.keys():
-                print(step["message"])
-                brain.screen.print(step["message"])
-                brain.screen.next_row()
+                self.print(step["message"])
 
             # TODO: add threading here
             if "x" in step.keys() and "y" in step.keys():
                 print("Going to position:", step["x"], step["y"])
-                r.go_to_position(step["x"], step["y"], False, 4)
+                target_state["x_pos"] = step["x"]
+                target_state["y_pos"] = step["y"]
+            
+            self.set_target_state(target_state)
 
-        t.stop()
+            while not self.target_reached:
+                self.update()
+                wait(0.1, SECONDS)
 
     def turn_to_heading(self, _heading, _wait=True):
         '''
@@ -944,7 +1002,7 @@ class Robot(GameObject):
         This function will have the robot turn to face the object
         '''
         # Get the delta theta needed for the robot to turn
-        delta_theta = (get_angle_to_object(
+        delta_theta = (get_heading_to_object(
             r, _gameobject) - inertial.heading(DEGREES))
 
         # Makes delta theta to go from [0, 360)
@@ -1221,7 +1279,7 @@ revamping_everthing = [{ 'x' : 0.0, 'y' : 0.0},{ 'x' : 0.0, 'y' : 1.88},{ 'x' : 
 
 # END OF PATHS ######### END OF PATHS ######### END OF PATHS ######### END OF PATHS ######### END OF PATHS
 
-def get_angle_to_object(gameobject_1, gameobject_2):
+def get_heading_to_object(gameobject_1, gameobject_2):
     '''
     RETURNS IN DEGREES
     TODO: if someone doesn't pass a gameobject then this will break everything
@@ -1231,13 +1289,26 @@ def get_angle_to_object(gameobject_1, gameobject_2):
     assert isinstance(gameobject_1, GameObject)
     assert isinstance(gameobject_2, GameObject)
 
-    ang = math.atan(((gameobject_2.y_pos) - (gameobject_1.y_pos)) /
-                    ((gameobject_2.x_pos) - (gameobject_1.x_pos))) * RAD_TO_DEG
-    if gameobject_1.x_pos > gameobject_2.x_pos:
-        ang += 180
+    if gameobject_1.x_pos == gameobject_2.x_pos:
+        return 180
 
+    if gameobject_1.x_pos < gameobject_2.x_pos:
+        ang = math.atan(((gameobject_2.y_pos - gameobject_1.y_pos)) /
+                        (gameobject_2.x_pos - gameobject_1.x_pos)) * RAD_TO_DEG
+    else:
+        ang = math.atan(((gameobject_2.y_pos - gameobject_1.y_pos)) /
+                        (gameobject_2.x_pos - gameobject_1.x_pos)) * RAD_TO_DEG + 180
+    
+    # if gameobject_1.x_pos > gameobject_2.x_pos:
+    #     ang -= 90 * sign(ang)
+
+    # if gameobject_1.y_pos > gameobject_2.y_pos:
+        
+    ang = 90 - ang
     if ang > 180:
         ang -= 360
+    if ang < -180:
+        ang += 360
 
     return ang
 
@@ -1262,21 +1333,55 @@ def driver_control():
 
     while True:
         # Update the robot's information
-        
+        new_theta = controller_1.axis1.position() * 0.75 + r.theta
+        if controller_1.axis1.position() == 0:
+            new_theta = r.target_state["theta"]
+            
         r.set_target_state(
             {
-                "x_vel" : controller_1.axis4.position(),
-                "y_vel" : controller_1.axis3.position(),
-                "theta_vel" : controller_1.axis1.position(),
+                "x_pos" : r.x_pos + controller_1.axis4.position() * 0.5,
+                "y_pos" : r.y_pos + controller_1.axis3.position() * 0.5,
+                "theta" : new_theta,
                 "slow_mode" : controller_1.buttonR1.pressing(),
             }
         )
+        if controller_1.buttonUp.pressing():
+            r.set_target_state(
+                {
+                    "theta" : 0,
+                }
+            )
+        if controller_1.buttonDown.pressing():
+            r.set_target_state(
+                {
+                    "theta" : 180,
+                }
+            )
+        if controller_1.buttonLeft.pressing():
+            r.set_target_state(
+                {
+                    "theta" : 90,
+                }
+            )
+        if controller_1.buttonRight.pressing():
+            r.set_target_state(
+                {
+                    "theta" : -90,
+                }
+            )
+        if controller_1.buttonY.pressing():
+            r.set_target_state({
+                "theta" : get_heading_to_object(r, r.goal)
+            })
         r.update()
 
         # Timer to print things out to the terminal every x seconds
         if (timer.time() > 0.1 * 1000):
             # r.print(f("pos",r.x_pos,r.y_pos, "gps", r.x_from_gps, r.y_from_gps, "vel",r.x_vel,r.y_vel))
-            r.print(f("x_enc", r.x_enc, "prev", r.previous_state["x_enc"], "theta", r.theta,r.theta_vel,  "time", r.state["time"], r.delta_time, r.previous_state["time"]))
+            
+            r.print(f("thetas", r.theta, r.target_state["theta"]))
+            r.print(f("pos", r.x_pos, r.y_pos, "gameobject", r.goal.x_pos, r.goal.y_pos, "theta", r.theta, get_heading_to_object(r, r.goal)))
+            # r.print(f("x_enc", r.x_enc, "prev", r.previous_state["x_enc"], "theta", r.theta,r.theta_vel,  "time", r.state["time"], r.delta_time, r.previous_state["time"]))
             # print(r.driver_controlled_timer.value(), flywheel_motor_1.velocity(PERCENT), flywheel_motor_2.velocity(PERCENT), flywheel_motor_1.power(), flywheel_motor_2.power(), flywheel_motor_1.current(), flywheel_motor_2.current(), flywheel_motor_1.torque(), flywheel_motor_2.torque(), flywheel_motor_1.temperature(), flywheel_motor_2.temperature())
             timer.reset()
 
@@ -1291,14 +1396,14 @@ def driver_control():
 
         # r.set_flywheel_speed(controller_1.axis3.position())
 
-        if controller_1.buttonUp.pressing():
-            r.set_flywheel_speed(100)
-        elif controller_1.buttonDown.pressing():
-            r.set_flywheel_speed(0)
-        elif controller_1.buttonLeft.pressing():
-            r.set_flywheel_speed(66)
-        elif controller_1.buttonRight.pressing():
-            r.set_flywheel_speed(33)
+        # if controller_1.buttonUp.pressing():
+        #     r.set_flywheel_speed(100)
+        # elif controller_1.buttonDown.pressing():
+        #     r.set_flywheel_speed(0)
+        # elif controller_1.buttonLeft.pressing():
+        #     r.set_flywheel_speed(66)
+        # elif controller_1.buttonRight.pressing():
+        #     r.set_flywheel_speed(33)
         
         # if controller_1.buttonA.pressing():
         #     shooter_thread = Thread(r.shoot_disk)
@@ -1373,10 +1478,13 @@ def init():
     while (inertial.gyro_rate(ZAXIS) != 0 and t.value() < 10):
         print("Waiting for gyro to init...")
         wait(0.1, SECONDS)
+    
+    r.init()
+    controller_1.rumble("...")
 
 
-red_goal = GameObject(100, 100)
-blue_goal = GameObject(100, 100)
+red_goal = GameObject(0, 0)
+blue_goal = GameObject(0, 0)
 
 wheel_gear_ratio = 18
 ticks_per_revolution = 50 * wheel_gear_ratio
@@ -1384,19 +1492,27 @@ ticks_per_revolution = 50 * wheel_gear_ratio
 field_length = 356  # CM
 
 r = Robot(0, 0)
+r.red_goal = red_goal
+r.blue_goal = blue_goal
+
+r.set_team("red")
 
 # r.use_gps(gps.installed())
 r.using_gps = False
 r.drone_mode = True
 r.slow_mode = False
 
+
 r.flywheel_motor_1_PID.set_constants(0.5,0.01,10)
 r.flywheel_motor_2_PID.set_constants(0.5,0.01,10)
+r.x_vel_PID.set_constants(10,0,0)
+r.y_vel_PID.set_constants(10,0,0)
+r.theta_vel_PID.set_constants(10,0,1)
 
 init()
 
-autonomous()
-# driver_control()
+# autonomous()
+driver_control()
 
 # competition = Competition(driver_control, autonomous)
 
