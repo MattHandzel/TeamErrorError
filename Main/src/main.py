@@ -6,6 +6,7 @@ from vex import *
 import random
 import vex
 import sys
+import json
 
 # Brain should be defined by default
 brain = Brain()
@@ -273,6 +274,8 @@ class Robot(GameObject):
     
     red_goal = GameObject(0, 100)
     blue_goal = GameObject(100, 0)
+
+    flywheel_speed = 0
     # State dictionary will hold ALL information about the robot
     '''
     '''
@@ -382,6 +385,7 @@ class Robot(GameObject):
         # target_theta_vel = self.target_state["theta_vel"]
 
         delta_theta = math.sqrt(abs(delta_theta)) * sign(delta_theta) 
+        # The multiplying by 100 and dividing by self.position tolerance scales it so that at position tolerance the velocity is 100 percent, squaring the velocity makes it so that if we get closer than we go slower
         target_x_vel = ((clamp(delta_x, self.position_tolerance, -self.position_tolerance) * 100 / self.position_tolerance) ** 2) / 100 * sign(delta_x)
         target_y_vel = ((clamp(delta_y, self.position_tolerance, -self.position_tolerance) * 100 / self.position_tolerance) ** 2) / 100 * sign(delta_y)
         target_theta_vel = ((clamp(delta_theta, self.orientation_tolerance, -self.orientation_tolerance) * 100 / self.orientation_tolerance) ** 2) / 100 * sign(delta_theta)
@@ -418,8 +422,8 @@ class Robot(GameObject):
 
         # Cool driving toggle (basically you rotate the target direction vector based on)
         # the robots heading (https://stackoverflow.com/questions/14607640/rotating-a-vector-in-3d-space)
-        if self.drone_mode:
-            target_x_vel, target_y_vel = rotate_vector_2d(target_x_vel, target_y_vel, self.theta * DEG_TO_RAD)
+        if self.drone_mode:                                                         # Add self.theta add dt times angular velocity to get a better approximation of actual theta at timestamp
+            target_x_vel, target_y_vel = rotate_vector_2d(target_x_vel, target_y_vel, (self.theta + self.delta_time / 2 * self.theta_vel) * DEG_TO_RAD)
 
         if self.slow_mode:
             target_x_vel = target_x_vel / 4
@@ -1037,20 +1041,20 @@ class Robot(GameObject):
         MAX_FLYWHEEL_SPEED = 100 / 60
         speed /= MAX_FLYWHEEL_SPEED
 
-        error_1 = -flywheel_motor_1.velocity(VelocityUnits.PERCENT) - speed
-        error_2 = -flywheel_motor_2.velocity(VelocityUnits.PERCENT) - speed
-        output_1 = self.flywheel_motor_1_PID.update(error_1)
-        output_2 = self.flywheel_motor_2_PID.update(error_2)
+        # error_1 = -flywheel_motor_1.velocity(VelocityUnits.PERCENT) - speed
+        # error_2 = -flywheel_motor_2.velocity(VelocityUnits.PERCENT) - speed
+        # output_1 = self.flywheel_motor_1_PID.update(error_1)
+        # output_2 = self.flywheel_motor_2_PID.update(error_2)
 
         
-        output_1 = output_1 if abs(output_1) < 100 else 100 * sign(output_1)
-        output_2 = output_2 if abs(output_2) < 100 else 100 * sign(output_2)
-        output_1 /= MAX_FLYWHEEL_SPEED
-        output_2 /= MAX_FLYWHEEL_SPEED
-        output_1 -= speed
-        output_2 -= speed
-        flywheel_motor_1.set_velocity(output_1, PERCENT)
-        flywheel_motor_2.set_velocity(output_2, PERCENT)
+        # output_1 = output_1 if abs(output_1) < 100 else 100 * sign(output_1)
+        # output_2 = output_2 if abs(output_2) < 100 else 100 * sign(output_2)
+        # output_1 /= MAX_FLYWHEEL_SPEED
+        # output_2 /= MAX_FLYWHEEL_SPEED
+        # output_1 -= speed
+        # output_2 -= speed
+        flywheel_motor_1.set_velocity(-speed, PERCENT)
+        flywheel_motor_2.set_velocity(-speed, PERCENT)
 
     def shoot_disk(self):
         '''
@@ -1336,39 +1340,16 @@ def driver_control():
         new_theta = controller_1.axis1.position() * 0.75 + r.theta
         if controller_1.axis1.position() == 0:
             new_theta = r.target_state["theta"]
-            
+        new_x = math.pow(abs(controller_1.axis4.position()), 2) / 100 * 0.5 * sign(controller_1.axis4.position())
+        new_y = math.pow(abs(controller_1.axis3.position()), 2) / 100 * 0.5 * sign(controller_1.axis3.position())  
         r.set_target_state(
             {
-                "x_pos" : r.x_pos + controller_1.axis4.position() * 0.5,
-                "y_pos" : r.y_pos + controller_1.axis3.position() * 0.5,
+                "x_pos" : r.x_pos + new_x,
+                "y_pos" : r.y_pos + new_y,
                 "theta" : new_theta,
                 "slow_mode" : controller_1.buttonR1.pressing(),
             }
         )
-        if controller_1.buttonUp.pressing():
-            r.set_target_state(
-                {
-                    "theta" : 0,
-                }
-            )
-        if controller_1.buttonDown.pressing():
-            r.set_target_state(
-                {
-                    "theta" : 180,
-                }
-            )
-        if controller_1.buttonLeft.pressing():
-            r.set_target_state(
-                {
-                    "theta" : 90,
-                }
-            )
-        if controller_1.buttonRight.pressing():
-            r.set_target_state(
-                {
-                    "theta" : -90,
-                }
-            )
         if controller_1.buttonY.pressing():
             r.set_target_state({
                 "theta" : get_heading_to_object(r, r.goal)
@@ -1378,9 +1359,10 @@ def driver_control():
         # Timer to print things out to the terminal every x seconds
         if (timer.time() > 0.1 * 1000):
             # r.print(f("pos",r.x_pos,r.y_pos, "gps", r.x_from_gps, r.y_from_gps, "vel",r.x_vel,r.y_vel))
-            
-            r.print(f("thetas", r.theta, r.target_state["theta"]))
-            r.print(f("pos", r.x_pos, r.y_pos, "gameobject", r.goal.x_pos, r.goal.y_pos, "theta", r.theta, get_heading_to_object(r, r.goal)))
+            # print(-flywheel_motor_1.velocity(PERCENT), -flywheel_motor_2.velocity(PERCENT), r.flywheel_speed / 100 * 60)
+            # r.print(f("thetas", r.theta, r.target_state["theta"]))
+            r.print(f("pos", r.x_pos, r.y_pos))
+            # r.print(f("pos", r.x_pos, r.y_pos, "gameobject", r.goal.x_pos, r.goal.y_pos, "theta", r.theta, get_heading_to_object(r, r.goal)))
             # r.print(f("x_enc", r.x_enc, "prev", r.previous_state["x_enc"], "theta", r.theta,r.theta_vel,  "time", r.state["time"], r.delta_time, r.previous_state["time"]))
             # print(r.driver_controlled_timer.value(), flywheel_motor_1.velocity(PERCENT), flywheel_motor_2.velocity(PERCENT), flywheel_motor_1.power(), flywheel_motor_2.power(), flywheel_motor_1.current(), flywheel_motor_2.current(), flywheel_motor_1.torque(), flywheel_motor_2.torque(), flywheel_motor_1.temperature(), flywheel_motor_2.temperature())
             timer.reset()
@@ -1395,7 +1377,15 @@ def driver_control():
         # r.intake(controller_1.axis2.position())
 
         # r.set_flywheel_speed(controller_1.axis3.position())
-
+        r.set_flywheel_speed(r.flywheel_speed)
+        if controller_1.buttonUp.pressing():
+            r.flywheel_speed += 10
+            r.flywheel_speed = min(r.flywheel_speed, 100)
+            wait(0.5, SECONDS)
+        if controller_1.buttonDown.pressing():
+            r.flywheel_speed -= 10
+            r.flywheel_speed = max(r.flywheel_speed, 0)
+            wait(0.5, SECONDS)
         # if controller_1.buttonUp.pressing():
         #     r.set_flywheel_speed(100)
         # elif controller_1.buttonDown.pressing():
@@ -1511,20 +1501,34 @@ r.theta_vel_PID.set_constants(10,0,1)
 
 init()
 
+# loggingEvent = Event() # Make a event for the data logger. We need this to run the data logging in parrel with the rest of the program
+
+# def dataLogging():
+#     while True:
+#         print(flywheel_motor_1.velocity(PERCENT), flywheel_motor_2.velocity(PERCENT))
+#         wait(20, MSEC)
+
+# def whenStarted():
+#     global loggingEvent
+#     loggingEvent.broadcast()
+    
+# # Add events handlers
+# loggingEvent(dataLogging)
+
+# wait(15, MSEC) # Wait for event handlers to apply. (This is very important. It will not work without this!)
+# whenStarted()
+
 # autonomous()
 driver_control()
 
 # competition = Competition(driver_control, autonomous)
 
 ##! PRIORITY
-# TODO: Revamp the driving command to work with go_to_position and inputting position and rotation vectors 
 # TODO: Theoretically, shouldn't max acceleration half if we're close to 0 for the motor speed? rework that function
-# TODO: Make a spin to command heading
 # TODO: Make a better pose/orienation initialization/resetting tool (initialize the position in the init() command, don't worry if we can't init yet)
 # TODO: Use sensor fusion with Kalman filter for better position
 # TODO: Make it os that the we init the robots orientation based off othe GPS (round it to the nearest 90 or 45 degrees), but make it so that drone mode still works
 # TODO: Use the gps and figure out how precise it is
-# TODO: Make pid for 
 # TODO: Experiment not waiting in self.position_update()
 # TODO: Make odometry consistent with real world measurements
 
