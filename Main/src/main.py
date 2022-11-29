@@ -1039,22 +1039,21 @@ class Robot(GameObject):
     
     def flywheel_pid(self, speed):
         MAX_FLYWHEEL_SPEED = 100 / 60
+        MAX_VOLTAGE = 10 # I don't think this is the true maximum voltage btw
+
         speed /= MAX_FLYWHEEL_SPEED
 
-        # error_1 = -flywheel_motor_1.velocity(VelocityUnits.PERCENT) - speed
-        # error_2 = -flywheel_motor_2.velocity(VelocityUnits.PERCENT) - speed
-        # output_1 = self.flywheel_motor_1_PID.update(error_1)
-        # output_2 = self.flywheel_motor_2_PID.update(error_2)
+        error_1 = -flywheel_motor_1.velocity(VelocityUnits.PERCENT) - speed
+        error_2 = -flywheel_motor_2.velocity(VelocityUnits.PERCENT) - speed
 
-        
-        # output_1 = output_1 if abs(output_1) < 100 else 100 * sign(output_1)
-        # output_2 = output_2 if abs(output_2) < 100 else 100 * sign(output_2)
-        # output_1 /= MAX_FLYWHEEL_SPEED
-        # output_2 /= MAX_FLYWHEEL_SPEED
-        # output_1 -= speed
-        # output_2 -= speed
-        flywheel_motor_1.set_velocity(-speed, PERCENT)
-        flywheel_motor_2.set_velocity(-speed, PERCENT)
+        output_1 = self.flywheel_motor_1_PID.update(error_1)
+        output_2 = self.flywheel_motor_2_PID.update(error_2)
+
+        output_1 = max(output_1, MAX_VOLTAGE)
+        output_2 = max(output_2, MAX_VOLTAGE)
+
+        flywheel_motor_1.spin((FORWARD if output_1 < 0 else REVERSE), output_1, VOLT)
+        flywheel_motor_2.spin((FORWARD if output_2 < 0 else REVERSE), output_2, VOLT)
 
     def shoot_disk(self):
         '''
@@ -1062,7 +1061,7 @@ class Robot(GameObject):
         '''
         self.is_shooting = True
         # Compute speed that the flywheel needs to speed
-
+        
         # Set the motors to the speed
 
         # Index a disk out of the magazine
@@ -1425,11 +1424,8 @@ def init():
     left_motor_b.set_stopping(BRAKE)
     right_motor_b.set_stopping(BRAKE)
 
-    flywheel_motor_1.spin(FORWARD)
-    flywheel_motor_2.spin(FORWARD)
-
-    flywheel_motor_1.set_velocity(0)
-    flywheel_motor_2.set_velocity(0)
+    flywheel_motor_1.spin(FORWARD, 0, VOLT)
+    flywheel_motor_2.spin(FORWARD, 0, VOLT)
 
     left_motor_a.set_velocity(0, PERCENT)
     right_motor_a.set_velocity(0, PERCENT)
@@ -1472,9 +1468,9 @@ def init():
     r.init()
     controller_1.rumble("...")
 
-
-red_goal = GameObject(0, 0)
-blue_goal = GameObject(0, 0)
+# From 0,0 (which is the center of the field). Dimensions were got from page 89 on: https://content.vexrobotics.com/docs/2022-2023/vrc-spin-up/VRC-SpinUp-Game-Manual-2.2.pdf
+red_goal = GameObject((122.63 - 70.2) * 2.54, (122.63 - 70.2) * 2.54)
+blue_goal = GameObject(-(122.63 - 70.2) * 2.54, -(122.63 - 70.2) * 2.54)
 
 wheel_gear_ratio = 18
 ticks_per_revolution = 50 * wheel_gear_ratio
@@ -1493,8 +1489,8 @@ r.drone_mode = True
 r.slow_mode = False
 
 
-r.flywheel_motor_1_PID.set_constants(0.5,0.01,10)
-r.flywheel_motor_2_PID.set_constants(0.5,0.01,10)
+r.flywheel_motor_1_PID.set_constants(0.1,0.005,0)
+r.flywheel_motor_2_PID.set_constants(0.1,0.005,0)
 r.x_vel_PID.set_constants(10,0,0)
 r.y_vel_PID.set_constants(10,0,0)
 r.theta_vel_PID.set_constants(10,0,1)
@@ -1531,6 +1527,7 @@ driver_control()
 # TODO: Use the gps and figure out how precise it is
 # TODO: Experiment not waiting in self.position_update()
 # TODO: Make odometry consistent with real world measurements
+# TODO: Figure out what negative voltage means and if we chilling with that
 
 # * IMPORTANT
 # TODO: Instead of rotating the driver control vector based off of the current theta, why not move it based off of the predicted theta/halfway between the two? this might remove the drifting that happens when rotation while moving
