@@ -357,7 +357,7 @@ class Robot(GameObject):
         self.estimate_state()
 
 
-        self.position_update()
+        # self.position_update()
         self.flywheel_update()
         # self.intake_update()
 
@@ -1341,18 +1341,18 @@ def driver_control():
             new_theta = r.target_state["theta"]
         new_x = math.pow(abs(controller_1.axis4.position()), 2) / 100 * 0.5 * sign(controller_1.axis4.position())
         new_y = math.pow(abs(controller_1.axis3.position()), 2) / 100 * 0.5 * sign(controller_1.axis3.position())  
-        r.set_target_state(
-            {
-                "x_pos" : r.x_pos + new_x,
-                "y_pos" : r.y_pos + new_y,
-                "theta" : new_theta,
-                "slow_mode" : controller_1.buttonR1.pressing(),
-            }
-        )
-        if controller_1.buttonY.pressing():
-            r.set_target_state({
-                "theta" : get_heading_to_object(r, r.goal)
-            })
+        # r.set_target_state(
+        #     {
+        #         "x_pos" : r.x_pos + new_x,
+        #         "y_pos" : r.y_pos + new_y,
+        #         "theta" : new_theta,
+        #         "slow_mode" : controller_1.buttonR1.pressing(),
+        #     }
+        # )
+        # if controller_1.buttonY.pressing():
+        #     r.set_target_state({
+        #         "theta" : get_heading_to_object(r, r.goal)
+        #     })
         r.update()
 
         # Timer to print things out to the terminal every x seconds
@@ -1360,15 +1360,15 @@ def driver_control():
             # r.print(f("pos",r.x_pos,r.y_pos, "gps", r.x_from_gps, r.y_from_gps, "vel",r.x_vel,r.y_vel))
             # print(-flywheel_motor_1.velocity(PERCENT), -flywheel_motor_2.velocity(PERCENT), r.flywheel_speed / 100 * 60)
             # r.print(f("thetas", r.theta, r.target_state["theta"]))
-            r.print(f("pos", r.x_pos, r.y_pos))
+            # r.print(f("pos", r.x_pos, r.y_pos))
             # r.print(f("pos", r.x_pos, r.y_pos, "gameobject", r.goal.x_pos, r.goal.y_pos, "theta", r.theta, get_heading_to_object(r, r.goal)))
             # r.print(f("x_enc", r.x_enc, "prev", r.previous_state["x_enc"], "theta", r.theta,r.theta_vel,  "time", r.state["time"], r.delta_time, r.previous_state["time"]))
             # print(r.driver_controlled_timer.value(), flywheel_motor_1.velocity(PERCENT), flywheel_motor_2.velocity(PERCENT), flywheel_motor_1.power(), flywheel_motor_2.power(), flywheel_motor_1.current(), flywheel_motor_2.current(), flywheel_motor_1.torque(), flywheel_motor_2.torque(), flywheel_motor_1.temperature(), flywheel_motor_2.temperature())
             timer.reset()
 
         # robot axis are based on x, y, and r vectors
-        # r.drive(controller_1.axis4.position(), controller_1.axis3.position(),
-        #         controller_1.axis1.position(), False, True)
+        r.drive(controller_1.axis4.position(), controller_1.axis3.position(),
+                controller_1.axis1.position(), False, True)
             
         # r.slow_mode = controller_1.buttonR2.pressing()
 
@@ -1489,7 +1489,7 @@ r.drone_mode = True
 r.slow_mode = False
 
 
-r.flywheel_motor_1_PID.set_constants(0.1,0.005,0)
+r.flywheel_motor_1_PID.set_constants(0.11,0.005,0)
 r.flywheel_motor_2_PID.set_constants(0.1,0.005,0)
 r.x_vel_PID.set_constants(10,0,0)
 r.y_vel_PID.set_constants(10,0,0)
