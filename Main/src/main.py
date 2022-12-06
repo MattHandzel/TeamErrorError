@@ -34,14 +34,14 @@ inertial = Inertial(Ports.PORT18)
 index_motor = Motor(Ports.PORT2, GearSetting.RATIO_18_1, False)
 roller_motor = Motor(Ports.PORT3, GearSetting.RATIO_18_1, False)
 intake_motor = Motor(Ports.PORT13, GearSetting.RATIO_18_1, False)
-roller_optical = Optical(Ports.PORT16)
+roller_optical = Optical(Ports.PORT12)
 
 indexer = Pneumatics(brain.three_wire_port.a)
 expansion = Pneumatics(brain.three_wire_port.b)
 
 
 
-gps = Gps(Ports.PORT3)
+gps = Gps(Ports.PORT12)
 
 global g
 g = -9.81
@@ -278,6 +278,9 @@ class Robot(GameObject):
     red_goal = GameObject(0, 100)
     blue_goal = GameObject(100, 0)
 
+    flywheel_1_avg_speed = 0
+    flywheel_2_avg_speed = 0
+
     flywheel_speed = 0
     # State dictionary will hold ALL information about the robot
     '''
@@ -296,6 +299,15 @@ class Robot(GameObject):
         "theta_vel" : 0,
 
         "time" : 0,
+
+        # Roller stuff
+        "roller_state" : "none",
+        "auto_roller" : False,
+        "roller_speed" : 0,
+        
+        # Intake
+        "auto_intake" : False,
+
         # Actuators
         "flywheel_speed" : 0,
         "intake_speed" : 0,
@@ -305,7 +317,8 @@ class Robot(GameObject):
         "is_shooting": False,
         "slow_mode" : False,
         "drone_mode" : False,
-        "autonomous" : False
+        "autonomous" : False,
+        
     }
 
     target_state = {}
@@ -362,7 +375,8 @@ class Robot(GameObject):
 
         self.position_update()
         self.flywheel_update()
-        # self.intake_update()
+        self.intake_update()
+        self.roller_update()
 
     
     def position_update(self):
@@ -502,7 +516,11 @@ class Robot(GameObject):
 
         # is a magic number that makes the gyro work better (experimentall I found that when the gyro reported that it spun 1 time, it actually overshot by about 3 degrees)
         self.total_theta += self.theta_vel * self.delta_time / 0.99375 / 2
-        self.theta = self.total_theta - (self.total_theta // 360 * 360)
+        
+        if self.using_gps:
+            self.theta = gps.heading()
+        else:
+            self.theta = self.total_theta - (self.total_theta // 360 * 360)
         
         # Use encoders to get our x and y positions so that we can take the derivative and get our velocity
         self.x_enc, self.y_enc = self.get_position_from_encoders()
@@ -555,6 +573,42 @@ class Robot(GameObject):
         if abs(self.state["x_pos"] - self.target_state["x_pos"]) < self.position_tolerance and abs(self.state["y_pos"] - self.target_state["y_pos"]) < self.position_tolerance:
             # print("TARGET STATE REACHED")
             self.target_reached = True
+    
+    def intake_update(self):
+        # If we have auto_intake enbaled 
+        if self["auto_intake"]:
+            
+            self["disk_near_intake"]
+    
+    def roller_update(self):
+        # Only if we have auto_roller enabled will we change the roller_speed
+        if self["auto_roller"]:
+
+            # We want to only get information from the sensor if the object is found
+            if  roller_optical.is_near_object() and roller_optical.color() == Color.RED:
+                self["roller_state"] = "red"
+            elif roller_optical.is_near_object() and roller_optical.color() == Color.BLUE:
+                self["roller_state"] = "blue"
+            else:
+                self["roller_state"] = "none"
+
+            if self["roller_state"] == "red":
+                self["roller_speed"] = 100
+            elif self["roller_state"] == "blue":
+                self["roller_speed"] = -100
+            else:
+                self["roller_speed"] = 0
+            
+            if self.notBlue:
+                self["roller_speed"] *= -1
+        print("roller update", self["roller_speed"])
+        # roller_motor.set_velocity(50, PERCENT)
+        roller_motor.spin(FORWARD, 100, PERCENT)
+
+
+
+    
+
 
 ##### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ###
     def set_target_state(self, _state):
@@ -576,6 +630,12 @@ class Robot(GameObject):
         self.drone_mode = self.target_state["drone_mode"]
         self.slow_mode = self.target_state["slow_mode"]
         self.using_gps = self.target_state["using_gps"]
+    
+    def __setitem__(self, key, value):
+        self.state[key] = value
+    
+    def __getitem__(self, key):
+        return self.state[key]
 
     def print_debug_info(self):
         print("left_motor_a_position:", left_motor_a.position(DEGREES), "left_motor_b_position:", left_motor_b.position(DEGREES), "right_motor_a_position:", right_motor_a.position(DEGREES), "right_motor_b_position:", right_motor_b.position(DEGREES))
@@ -805,9 +865,9 @@ class Robot(GameObject):
             theta - rotate the robot to that theta
             wait - wait for that many seconds
             actions - a list of actions to run
-                unload - unload the disc
-                load - load the disc
-                shoot - shoot the disc
+                unload - unload the disk
+                load - load the disk
+                shoot - shoot the disk
                 spin_roller - spin the roller
             message - a message to print to the console and brain (for debugging purposes)
 
@@ -1034,7 +1094,8 @@ class Robot(GameObject):
     
     def flywheel_update(self):
         if self.flywheel_speed != 0:
-            self.flywheel_pid(self.flywheel_speed)
+            # self.flywheel_pid(self.flywheel_speed)
+            pass
         else:
             flywheel_motor_1.set_velocity(0, PERCENT)
             flywheel_motor_2.set_velocity(0, PERCENT)
@@ -1043,32 +1104,36 @@ class Robot(GameObject):
     def flywheel_pid(self, speed):
         MAX_FLYWHEEL_SPEED = 100 / 60
         MAX_VOLTAGE = 10 # I don't think this is the true maximum voltage btw
+        
+        alpha = 0.1
+        self.flywheel_1_avg_speed = flywheel_motor_1.velocity(PERCENT) * alpha + self.flywheel_1_avg_speed * (1 - alpha)
+        self.flywheel_2_avg_speed = flywheel_motor_2.velocity(PERCENT) * alpha + self.flywheel_2_avg_speed * (1 - alpha)
 
         if speed < 20:
             return
+
         speed /= MAX_FLYWHEEL_SPEED
         
-        flywheel_motor_2.spin(FORWARD, speed * (10 - 2.5) / (70 - 20), VOLT)
-
         # error_1 = speed + flywheel_motor_1.velocity(VelocityUnits.PERCENT) 
         # error_2 = speed + flywheel_motor_2.velocity(VelocityUnits.PERCENT) 
 
-        # output_1 = self.flywheel_motor_1_PID.update(-error_1)
-        # output_2 = self.flywheel_motor_2_PID.update(-error_2)
+        # output_1 = self.flywheel_motor_1_PID.update(error_1)
+        # output_2 = self.flywheel_motor_2_PID.update(error_2)
 
         # output_1 = min(output_1, MAX_VOLTAGE)
         # output_2 = min(output_2, MAX_VOLTAGE)
 
+        # output_1 = max(output_1, 0)
+        # output_2 = max(output_2, 0)
         # output_1 = max(output_1, -MAX_VOLTAGE)
         # output_2 = max(output_2, -MAX_VOLTAGE)
 
-        # flywheel_motor_1.spin(FORWARD, output_1, VOLT)
-        
-        # flywheel_motor_2.spin(FORWARD, output_2, VOLT)
+        # flywheel_motor_1.spin(REVERSE, output_2, VOLT)
+        # flywheel_motor_2.spin(REVERSE, output_2, VOLT)
 
         self.flywheel_motor_1_error = 0
         self.flyhweel_motor_2_error = 0
-        
+
         # print("Error", error_1, error_2, "Velocity",flywheel_motor_1.velocity(VelocityUnits.PERCENT), "Output", output_1, output_2)
 
     def shoot_disk(self):
@@ -1354,34 +1419,45 @@ def driver_control():
 
     r.flyhweel_motor_2_error = 0
 
+    flywheel_1_speed = 0
+    flywheel_2_speed = 0
+
     while True:
         # Update the robot's information
         new_theta = controller_1.axis1.position() * 0.75 + r.theta
         if controller_1.axis1.position() == 0:
             new_theta = r.target_state["theta"]
-        new_x = math.pow(abs(controller_1.axis4.position()), 2) / 100 * 0.5 * sign(controller_1.axis4.position())
-        new_y = math.pow(abs(controller_1.axis3.position()), 2) / 100 * 0.5 * sign(controller_1.axis3.position())  
-        r.set_target_state(
-            {
 
-                "x_pos" : r.x_pos + new_x,
-                "y_pos" : r.y_pos + new_y,
-                "theta" : new_theta,
-                "slow_mode" : controller_1.buttonR1.pressing(),
-            }
-        )
-        if controller_1.buttonY.pressing():
-            r.set_target_state({
-                "theta" : get_heading_to_object(r, r.goal)
-            })
+        r["roller_speed"] = controller_1.axis2.position()
+
+        # roller_motor.spin(FORWARD, 100, PERCENT)
+        
+
+        # new_x = math.pow(abs(controller_1.axis4.position()), 2) / 100 * 0.25 * sign(controller_1.axis4.position()) 
+        # new_y = math.pow(abs(controller_1.axis3.position()), 2) / 100 * 0.25 * sign(controller_1.axis3.position())  
+        # r.set_target_state(
+        #     {
+
+        #         "x_pos" : r.x_pos + new_x,
+        #         "y_pos" : r.y_pos + new_y,
+        #         "theta" : new_theta,
+        #         "slow_mode" : controller_1.buttonR1.pressing(),
+        #     }
+        # )
+        # if controller_1.buttonY.pressing():
+        #     r.set_target_state({
+        #         "theta" : get_heading_to_object(r, r.goal)
+        #     })
         r.update()
 
         # Timer to print things out to the terminal every x seconds
         if (timer.time() > 0.2 * 1000):
+            # print("roller_speed", r["roller_speed"])
             # r.print(f("pos",r.x_pos,r.y_pos, "gps", r.x_from_gps, r.y_from_gps, "vel",r.x_vel,r.y_vel))
+            # print(r["auto_roller"], r["roller_speed"], r["roller_state"])
             # print(-flywheel_motor_1.velocity(PERCENT), -flywheel_motor_2.velocity(PERCENT), -r.flywheel_speed / 100 * 60)
-            print(r.flywheel_speed, flywheel_motor_2.velocity(PERCENT), r.flyhweel_motor_2_error)
-
+            # print(r.flywheel_speed,flywheel_motor_1.velocity(PERCENT),  flywheel_motor_2.velocity(PERCENT), r.flyhweel_motor_2_error)
+            print(flywheel_motor_1.velocity(PERCENT), flywheel_1_speed, flywheel_motor_2.velocity(PERCENT), flywheel_2_speed)
             # r.print(f("thetas", r.theta, r.target_state["theta"]))
             # r.print(f("pos", r.x_pos, r.y_pos))
             # r.print(f("pos", r.x_pos, r.y_pos, "gameobject", r.goal.x_pos, r.goal.y_pos, "theta", r.theta, get_heading_to_object(r, r.goal)))
@@ -1409,17 +1485,30 @@ def driver_control():
 
         # r.set_flywheel_speed(controller_1.axis3.position())
         r.set_flywheel_speed(r.flywheel_speed)
-        if controller_1.buttonUp.pressing():
-            r.flywheel_speed += 10
-            r.flywheel_speed = min(r.flywheel_speed, 100)
-            # voltage_for_wheel += 0.5
-            wait(0.5, SECONDS)
-        if controller_1.buttonDown.pressing():
-            r.flywheel_speed -= 10
-            r.flywheel_speed = max(r.flywheel_speed, -100)
-            # voltage_for_wheel -= 0.5
+        if controller_1.buttonUp.pressing() and controller_1.buttonLeft.pressing():
+            flywheel_1_speed += 0.5
+        if controller_1.buttonDown.pressing() and controller_1.buttonLeft.pressing():
+            flywheel_1_speed -= 0.5
+        if controller_1.buttonUp.pressing() and controller_1.buttonRight.pressing():
+            flywheel_2_speed += 0.5
+        if controller_1.buttonDown.pressing() and controller_1.buttonRight.pressing():
+            flywheel_2_speed -= 0.5
+        
+        flywheel_motor_1.spin(FORWARD, flywheel_1_speed, VOLT)
+        flywheel_motor_2.spin(FORWARD, flywheel_2_speed, VOLT)
 
-            wait(0.5, SECONDS)
+
+            # if controller_1.buttonUp.pressing():
+            #     r.flywheel_speed += 10
+            #     r.flywheel_speed = min(r.flywheel_speed, 100)
+            #     # voltage_for_wheel += 0.5
+            #     wait(0.5, SECONDS)
+            # if controller_1.buttonDown.pressing():
+            #     r.flywheel_speed -= 10
+            #     r.flywheel_speed = max(r.flywheel_speed, -100)
+            #     # voltage_for_wheel -= 0.5
+
+            #     wait(0.5, SECONDS)
         # if controller_1.buttonUp.pressing():
         #     r.set_flywheel_speed(100)
         # elif controller_1.buttonDown.pressing():
@@ -1448,7 +1537,7 @@ def driver_control():
         if controller_1.buttonB.pressing():
             r.print_debug_info()
 
-        wait(0.01, SECONDS)
+        wait(0.1, SECONDS)
 
 def init():
     # Make it so that the motors stop instead of coast
@@ -1486,8 +1575,7 @@ def init():
     roller_motor.set_velocity(0, PERCENT)
 
     # Set the optical light power
-    roller_optical.set_light_power(0)
-    roller_optical.object_detect_threshold(100)
+    roller_optical.set_light_power(100)
 
 
     # Wait for the gyro to settle, if it takes more then 10 seconds then close out of the loop
@@ -1522,13 +1610,14 @@ r.set_team("red")
 r.using_gps = False
 r.drone_mode = True
 r.slow_mode = False
+r["auto_roller"] = False
 
 # kY = 0.2375
 # kU = 0.23
-kU = 0.3
+kU = 0.75
 tU = 0.2375
 tU = 2
-r.flywheel_motor_1_PID.set_constants(0,0,0)
+r.flywheel_motor_1_PID.set_constants(kU,0,0)
 # r.flywheel_motor_2_PID.set_constants(kU * 0.33, 0.66 * kU / tU,-0.1111 * kU * tU)
 r.flywheel_motor_2_PID.set_constants(kU, 0,0)
 
@@ -1569,6 +1658,9 @@ driver_control()
 # TODO: Experiment not waiting in self.position_update()
 # TODO: Make odometry consistent with real world measurements
 # TODO: Figure out what negative voltage means and if we chilling with that
+# TODO: Avg. velocity
+# TODO: Tune pid controllers for flywheel
+# TODO: add intake
 
 # * IMPORTANT
 # TODO: Instead of rotating the driver control vector based off of the current theta, why not move it based off of the predicted theta/halfway between the two? this might remove the drifting that happens when rotation while moving
