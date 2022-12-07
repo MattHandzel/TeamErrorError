@@ -39,8 +39,6 @@ roller_optical = Optical(Ports.PORT12)
 indexer = Pneumatics(brain.three_wire_port.a)
 expansion = Pneumatics(brain.three_wire_port.b)
 
-
-
 gps = Gps(Ports.PORT12)
 
 global g
@@ -199,12 +197,18 @@ class GameObject:
 ##### START OF ROBOT CLASS ### START OF ROBOT CLASS ### START OF ROBOT CLASS ### START OF ROBOT CLASS ###
 ##### START OF ROBOT CLASS ### START OF ROBOT CLASS ### START OF ROBOT CLASS ### START OF ROBOT CLASS ###
 
-class Robot(GameObject):
+class Robot:
     '''
     This is the big-boy class, this is the robot class, this is the class that controls the robot, there is a lot of stuff here
     '''
-    theta_shooter: float = 20
-    theta_robot: float = 0
+
+    ###* ORIENTATION/POSITION VARIABLES
+    total_theta = 0
+    theta_offset = 0
+    max_velocity: float
+    max_acceleration: float
+
+    ###* FLYWHEEL
     length: float = 38.1
 
     # Set the offset for the flywheel from the center of the robot
@@ -213,21 +217,25 @@ class Robot(GameObject):
 
     flywheel_angle = 45 * DEG_TO_RAD
 
+    flywheel_1_avg_speed = 0
+    flywheel_2_avg_speed = 0
+
+    flywheel_speed = 0
+
+    ###* DRIVETRAIN
+
     previous_update_time: float = 0
 
-    wheel_gear_ratio = 18
+    drivetrain_gear_ratio = 18
 
     wheel_max_rpm: float = 200
     wheel_diameter_CM: float = 10.5
 
     # In order to get this, it is ticks for the specific gear ratio we're using divided by the circumeference of our wheel
-    wheel_distance_CM_to_TICK_coefficient: float = (wheel_gear_ratio / 6 * 300) / \
+    wheel_distance_CM_to_TICK_coefficient: float = (drivetrain_gear_ratio / 6 * 300) / \
         (math.pi * wheel_diameter_CM)
 
-    max_velocity: float
-    max_acceleration: float
 
-    total_theta = 0
 
     # PID controller constants
     motor_PID_kP = 10
@@ -275,13 +283,11 @@ class Robot(GameObject):
     position_tolerance = 3 # tolerance to target position in cm
     orientation_tolerance = 8 # tolerance to target orientation in degrees
     
-    red_goal = GameObject(0, 100)
-    blue_goal = GameObject(100, 0)
+    red_goal = GameObject((122.63 - 70.2) * 2.54, (122.63 - 70.2) * 2.54)
+    blue_goal = GameObject(-(122.63 - 70.2) * 2.54, -(122.63 - 70.2) * 2.54)
 
-    flywheel_1_avg_speed = 0
-    flywheel_2_avg_speed = 0
 
-    flywheel_speed = 0
+
     # State dictionary will hold ALL information about the robot
     '''
     '''
@@ -327,7 +333,10 @@ class Robot(GameObject):
     y_vel_PID = PID(0.1, 0, 0)
     theta_vel_PID = PID(0.1, 0, 0)
 
-    def __init__(self, x_pos=0, y_pos=0, theta=0):
+    flywheel_motor_1_error = 0
+    flywheel_motor_2_error = 0
+
+    def __init__(self):
         '''
         Initializes the robot class, computes the max velocity and acceleration
         params -
@@ -335,8 +344,6 @@ class Robot(GameObject):
             y_pos - set the robot's y position
             theta - set the robot's theta
         '''
-        super().__init__(x_pos, y_pos)
-        self.theta = theta
 
         # what our max velocity "should" be (can go higher or lower)
         self.max_velocity = ((self.wheel_max_rpm / 60) *
@@ -350,9 +357,15 @@ class Robot(GameObject):
         self.set_target_state(self.state)
         self.previous_state = self.state
     
+    # There are two init methods, this init initializes the class, the other init method we call to initlize the robot
     def init(self):
+        
+        # Set heading based on gps
+        if gps.installed():
+            pass
         self.set_target_state(self.state)
         self.previous_state = self.state
+
         
     
 
@@ -371,7 +384,6 @@ class Robot(GameObject):
         # Update the previous state before doing state estimation
         self.previous_state = self.state.copy()
         self.estimate_state()
-
 
         self.position_update()
         self.flywheel_update()
@@ -542,10 +554,9 @@ class Robot(GameObject):
         x_from_gps = 0
         y_from_gps = 0
         alpha = 0
-        
         if self.using_gps and gps.quality() >= 100: 
             # Update alpha to value that uses gps
-            alpha = 0.9
+            alpha = 1
             x_from_gps = gps.x_position(DistanceUnits.CM)
             y_from_gps = gps.y_position(DistanceUnits.CM)
 
@@ -561,8 +572,8 @@ class Robot(GameObject):
 
         # If we have not moved (from the encoders point of view), and the gps is not changing that much, then use the rolling average from the gps
         # If gps is enabled then the low and high pass filter will make the x and y position more stable, if gps is not enabled then the formula won't use gps data (alpha would equal 0)
-        self.x_pos += delta_x_from_encoders * (1-alpha) # + (x_from_gps-self.x_pos) * alpha 
-        self.y_pos += delta_y_from_encoders * (1-alpha) # + (y_from_gps-self.y_pos) * alpha
+        self.x_pos += delta_x_from_encoders * (1-alpha) + (x_from_gps-self.x_pos) * alpha 
+        self.y_pos += delta_y_from_encoders * (1-alpha) + (y_from_gps-self.y_pos) * alpha
         
         self.x_from_gps = x_from_gps
         self.y_from_gps = y_from_gps
@@ -592,18 +603,15 @@ class Robot(GameObject):
             else:
                 self["roller_state"] = "none"
 
-            if self["roller_state"] == "red":
-                self["roller_speed"] = 100
-            elif self["roller_state"] == "blue":
-                self["roller_speed"] = -100
+            if self["roller_state"] == "red" and self.notBlue:
+                self["roller_speed"] = -50
+            elif self["roller_state"] == "blue" and not self.notBlue:
+                self["roller_speed"] = 50
             else:
                 self["roller_speed"] = 0
             
-            if self.notBlue:
-                self["roller_speed"] *= -1
-        print("roller update", self["roller_speed"])
-        # roller_motor.set_velocity(50, PERCENT)
-        roller_motor.spin(FORWARD, 100, PERCENT)
+
+        roller_motor.spin(FORWARD, self["roller_speed"], PERCENT)
 
 
 
@@ -670,10 +678,10 @@ class Robot(GameObject):
         print("INPUT FROM SET_TEAM IS:\t", _color)
         if _color == "red":
             self.notBlue = True
-            self.goal = red_goal
+            self.goal = self.red_goal
             return
         elif _color == "blue":
-            self.goal = blue_goal
+            self.goal = self.blue_goal
             self.notBlue = False
             return
         raise Exception("broo you dodn't set a proper team color")
@@ -924,6 +932,7 @@ class Robot(GameObject):
         # at each timestep and drive the robot at a specific velocity until the desired heading is reached
 
         # self.print(f"Turning to heading {_heading}")
+        
         return
 
     # if you are readign this code and are not me (Matt Handzel) and don't know what this is, then look up python getters and setters
@@ -1087,19 +1096,13 @@ class Robot(GameObject):
         # Use a PID loop or just basic controls to have the robot turn towards the object here
 
 
-##### SHOOTER ### SHOOTER ### SHOOTER ### SHOOTER ### SHOOTER ### SHOOTER ### SHOOTER ### SHOOTER ###
+##### FLYWHEEL ### FLYWHEEL ### FLYWHEEL ### FLYWHEEL ### FLYWHEEL ### FLYWHEEL ### FLYWHEEL ### FLYWHEEL ###
     def set_flywheel_speed(self, speed):
         self.flywheel_speed = speed
         
     
     def flywheel_update(self):
-        if self.flywheel_speed != 0:
-            # self.flywheel_pid(self.flywheel_speed)
-            pass
-        else:
-            flywheel_motor_1.set_velocity(0, PERCENT)
-            flywheel_motor_2.set_velocity(0, PERCENT)
-        
+        self.flywheel_pid(self.flywheel_speed)        
     
     def flywheel_pid(self, speed):
         MAX_FLYWHEEL_SPEED = 100 / 60
@@ -1110,9 +1113,17 @@ class Robot(GameObject):
         self.flywheel_2_avg_speed = flywheel_motor_2.velocity(PERCENT) * alpha + self.flywheel_2_avg_speed * (1 - alpha)
 
         if speed < 20:
+            flywheel_motor_1.spin(REVERSE, 0, VOLT)
+            flywheel_motor_2.spin(REVERSE, 0, VOLT)
             return
 
         speed /= MAX_FLYWHEEL_SPEED
+
+        flywheel_motor_1.spin(FORWARD, speed, PERCENT)
+        flywheel_motor_2.spin(FORWARD, speed, PERCENT)
+
+        # flywheel_motor_1.spin(FORWARD, speed, PERCENT)
+        # flywheel_motor_2.spin(FORWARD, speed, PERCENT)
         
         # error_1 = speed + flywheel_motor_1.velocity(VelocityUnits.PERCENT) 
         # error_2 = speed + flywheel_motor_2.velocity(VelocityUnits.PERCENT) 
@@ -1125,6 +1136,7 @@ class Robot(GameObject):
 
         # output_1 = max(output_1, 0)
         # output_2 = max(output_2, 0)
+
         # output_1 = max(output_1, -MAX_VOLTAGE)
         # output_2 = max(output_2, -MAX_VOLTAGE)
 
@@ -1132,7 +1144,7 @@ class Robot(GameObject):
         # flywheel_motor_2.spin(REVERSE, output_2, VOLT)
 
         self.flywheel_motor_1_error = 0
-        self.flyhweel_motor_2_error = 0
+        self.flywheel_motor_2_error = 0
 
         # print("Error", error_1, error_2, "Velocity",flywheel_motor_1.velocity(VelocityUnits.PERCENT), "Output", output_1, output_2)
 
@@ -1162,19 +1174,16 @@ class Robot(GameObject):
         # Equation to find the speed that the flywheel needs:
 
         self.update()
-        goal = blue_goal
-        if self.notBlue:
-            goal = red_goal
 
-        delta_x = goal.x_pos - self.x_pos - self.flywheel_offset_x
-        delta_y = goal.y_pos - self.y_pos - self.flywheel_offset_y
+        delta_x = self.goal.x_pos - self.x_pos - self.flywheel_offset_x
+        delta_y = self.goal.y_pos - self.y_pos - self.flywheel_offset_y
 
-        # TODO: Factor in the position of the shooter
+        # TODO: Factor in the position of the flywheel
 
         # Compute the linear speed that the disk needs to be launched to
-        # math.cos(theta_shooter * DEG_TO_RAD)
+        # math.cos(theta_flywheel * DEG_TO_RAD)
 
-        # distance_to_goal * theta_shooter
+        # distance_to_goal * theta_flywheel
         pass
 
 # ROLLERS ### ROLLERS ### ROLLERS ### ROLLERS ### ROLLERS ### ROLLERS ### ROLLERS ### ROLLERS
@@ -1368,11 +1377,7 @@ def get_heading_to_object(gameobject_1, gameobject_2):
     RETURNS IN DEGREES
     TODO: if someone doesn't pass a gameobject then this will break everything
     '''
-
     # Checks to see if both objects are of the GameObject class
-    assert isinstance(gameobject_1, GameObject)
-    assert isinstance(gameobject_2, GameObject)
-
     if gameobject_1.x_pos == gameobject_2.x_pos:
         return 180
 
@@ -1417,21 +1422,16 @@ def driver_control():
 
     voltage_for_wheel = 0
 
-    r.flyhweel_motor_2_error = 0
-
     flywheel_1_speed = 0
     flywheel_2_speed = 0
+
+    flywheel_speed = 0
 
     while True:
         # Update the robot's information
         new_theta = controller_1.axis1.position() * 0.75 + r.theta
-        if controller_1.axis1.position() == 0:
-            new_theta = r.target_state["theta"]
-
-        r["roller_speed"] = controller_1.axis2.position()
-
-        # roller_motor.spin(FORWARD, 100, PERCENT)
-        
+        # if controller_1.axis1.position() == 0:
+        #     new_theta = r.target_state["theta"]
 
         # new_x = math.pow(abs(controller_1.axis4.position()), 2) / 100 * 0.25 * sign(controller_1.axis4.position()) 
         # new_y = math.pow(abs(controller_1.axis3.position()), 2) / 100 * 0.25 * sign(controller_1.axis3.position())  
@@ -1440,7 +1440,7 @@ def driver_control():
 
         #         "x_pos" : r.x_pos + new_x,
         #         "y_pos" : r.y_pos + new_y,
-        #         "theta" : new_theta,
+        #         "theta" : r.theta + new_theta,
         #         "slow_mode" : controller_1.buttonR1.pressing(),
         #     }
         # )
@@ -1448,21 +1448,14 @@ def driver_control():
         #     r.set_target_state({
         #         "theta" : get_heading_to_object(r, r.goal)
         #     })
+
+
         r.update()
 
         # Timer to print things out to the terminal every x seconds
         if (timer.time() > 0.2 * 1000):
-            # print("roller_speed", r["roller_speed"])
-            # r.print(f("pos",r.x_pos,r.y_pos, "gps", r.x_from_gps, r.y_from_gps, "vel",r.x_vel,r.y_vel))
-            # print(r["auto_roller"], r["roller_speed"], r["roller_state"])
-            # print(-flywheel_motor_1.velocity(PERCENT), -flywheel_motor_2.velocity(PERCENT), -r.flywheel_speed / 100 * 60)
-            # print(r.flywheel_speed,flywheel_motor_1.velocity(PERCENT),  flywheel_motor_2.velocity(PERCENT), r.flyhweel_motor_2_error)
-            print(flywheel_motor_1.velocity(PERCENT), flywheel_1_speed, flywheel_motor_2.velocity(PERCENT), flywheel_2_speed)
-            # r.print(f("thetas", r.theta, r.target_state["theta"]))
-            # r.print(f("pos", r.x_pos, r.y_pos))
-            # r.print(f("pos", r.x_pos, r.y_pos, "gameobject", r.goal.x_pos, r.goal.y_pos, "theta", r.theta, get_heading_to_object(r, r.goal)))
-            # r.print(f("x_enc", r.x_enc, "prev", r.previous_state["x_enc"], "theta", r.theta,r.theta_vel,  "time", r.state["time"], r.delta_time, r.previous_state["time"]))
-            # print(r.driver_controlled_timer.value(), flywheel_motor_1.velocity(PERCENT), flywheel_motor_2.velocity(PERCENT), flywheel_motor_1.power(), flywheel_motor_2.power(), flywheel_motor_1.current(), flywheel_motor_2.current(), flywheel_motor_1.torque(), flywheel_motor_2.torque(), flywheel_motor_1.temperature(), flywheel_motor_2.temperature())
+            # print(flywheel_motor_1.velocity(PERCENT), flywheel_motor_2.velocity(PERCENT), r.flywheel_speed)
+            print(r.x_pos, r.y_pos, r.theta, r.target_state["theta"])
             timer.reset()
 
         # robot axis are based on x, y, and r vectors
@@ -1471,55 +1464,26 @@ def driver_control():
             
         # r.slow_mode = controller_1.buttonR2.pressing()
 
-        # if controller_1.buttonR1.pressing():
-        #     flywheel_motor_1.spin(REVERSE, voltage_for_wheel, VOLT)
-        # else:
-        #     flywheel_motor_1.spin(REVERSE, 0, VOLT)
-        # if controller_1.buttonL1.pressing():
-        #     flywheel_motor_2.spin(REVERSE, voltage_for_wheel, VOLT)
-        # else:
-        #     flywheel_motor_2.spin(REVERSE, 0, VOLT)
 
         # Run the intake subsystem, set the desired speed
         # r.intake(controller_1.axis2.position())
 
-        # r.set_flywheel_speed(controller_1.axis3.position())
-        r.set_flywheel_speed(r.flywheel_speed)
-        if controller_1.buttonUp.pressing() and controller_1.buttonLeft.pressing():
-            flywheel_1_speed += 0.5
-        if controller_1.buttonDown.pressing() and controller_1.buttonLeft.pressing():
-            flywheel_1_speed -= 0.5
-        if controller_1.buttonUp.pressing() and controller_1.buttonRight.pressing():
-            flywheel_2_speed += 0.5
-        if controller_1.buttonDown.pressing() and controller_1.buttonRight.pressing():
-            flywheel_2_speed -= 0.5
-        
-        flywheel_motor_1.spin(FORWARD, flywheel_1_speed, VOLT)
-        flywheel_motor_2.spin(FORWARD, flywheel_2_speed, VOLT)
+        # r.set_flywheel_speed(controller_1.axis2.position())
+        if controller_1.buttonUp.pressing():
+            r.set_flywheel_speed(100)
+        elif controller_1.buttonDown.pressing():
+            r.set_flywheel_speed(0)
+        elif controller_1.buttonLeft.pressing():
+            r.set_flywheel_speed(66)
+        elif controller_1.buttonRight.pressing():
+            r.set_flywheel_speed(33)
+            
 
+        # if controller_1.buttonY.pressing():
+        #     r.target_state["theta"] = get_heading_to_object(r, r.goal)
 
-            # if controller_1.buttonUp.pressing():
-            #     r.flywheel_speed += 10
-            #     r.flywheel_speed = min(r.flywheel_speed, 100)
-            #     # voltage_for_wheel += 0.5
-            #     wait(0.5, SECONDS)
-            # if controller_1.buttonDown.pressing():
-            #     r.flywheel_speed -= 10
-            #     r.flywheel_speed = max(r.flywheel_speed, -100)
-            #     # voltage_for_wheel -= 0.5
-
-            #     wait(0.5, SECONDS)
-        # if controller_1.buttonUp.pressing():
-        #     r.set_flywheel_speed(100)
-        # elif controller_1.buttonDown.pressing():
-        #     r.set_flywheel_speed(0)
-        # elif controller_1.buttonLeft.pressing():
-        #     r.set_flywheel_speed(66)
-        # elif controller_1.buttonRight.pressing():
-        #     r.set_flywheel_speed(33)
-        
         # if controller_1.buttonA.pressing():
-        #     shooter_thread = Thread(r.shoot_disk)
+        #     flywheel_thread = Thread(r.shoot_disk)
 
         # if controller_1.buttonR1.pressing() and not r.is_shooting:
         #     r.shoot_disk()
@@ -1577,49 +1541,46 @@ def init():
     # Set the optical light power
     roller_optical.set_light_power(100)
 
-
     # Wait for the gyro to settle, if it takes more then 10 seconds then close out of the loop
     t = Timer()
 
     t.reset()
     if gps.installed():
         gps.calibrate()
+
     while (inertial.gyro_rate(ZAXIS) != 0 and t.value() < 10):
         print("Waiting for gyro to init...")
         wait(0.1, SECONDS)
     
     r.init()
+    
     controller_1.rumble("...")
 
 # From 0,0 (which is the center of the field). Dimensions were got from page 89 on: https://content.vexrobotics.com/docs/2022-2023/vrc-spin-up/VRC-SpinUp-Game-Manual-2.2.pdf
-red_goal = GameObject((122.63 - 70.2) * 2.54, (122.63 - 70.2) * 2.54)
-blue_goal = GameObject(-(122.63 - 70.2) * 2.54, -(122.63 - 70.2) * 2.54)
 
 wheel_gear_ratio = 18
 ticks_per_revolution = 50 * wheel_gear_ratio
 
 field_length = 356  # CM
 
-r = Robot(0, 0)
-r.red_goal = red_goal
-r.blue_goal = blue_goal
+r = Robot()
 
 r.set_team("red")
 
 # r.use_gps(gps.installed())
-r.using_gps = False
+r.using_gps = True
 r.drone_mode = True
 r.slow_mode = False
-r["auto_roller"] = False
+r["auto_roller"] = True
 
 # kY = 0.2375
 # kU = 0.23
-kU = 0.75
+kU = 1
 tU = 0.2375
 tU = 2
 r.flywheel_motor_1_PID.set_constants(kU,0,0)
 # r.flywheel_motor_2_PID.set_constants(kU * 0.33, 0.66 * kU / tU,-0.1111 * kU * tU)
-r.flywheel_motor_2_PID.set_constants(kU, 0,0)
+r.flywheel_motor_2_PID.set_constants(kU,0,0)
 
 r.x_vel_PID.set_constants(10,0,0)
 r.y_vel_PID.set_constants(10,0,0)
@@ -1627,47 +1588,25 @@ r.theta_vel_PID.set_constants(10,0,1)
 
 init()
 
-# loggingEvent = Event() # Make a event for the data logger. We need this to run the data logging in parrel with the rest of the program
-
-# def dataLogging():
-#     while True:
-#         print(flywheel_motor_1.velocity(PERCENT), flywheel_motor_2.velocity(PERCENT))
-#         wait(20, MSEC)
-
-# def whenStarted():
-#     global loggingEvent
-#     loggingEvent.broadcast()
-    
-# # Add events handlers
-# loggingEvent(dataLogging)
-
-# wait(15, MSEC) # Wait for event handlers to apply. (This is very important. It will not work without this!)
-# whenStarted()
-
 # autonomous()
 driver_control()
 
 # competition = Competition(driver_control, autonomous)
 
 ##! PRIORITY
+# TODO: Make it so that the robot movement is based off of the gps for now AND THEN add it using the encoders (kinda backwards, ik)
+
+
 # TODO: Theoretically, shouldn't max acceleration half if we're close to 0 for the motor speed? rework that function
 # TODO: Make a better pose/orienation initialization/resetting tool (initialize the position in the init() command, don't worry if we can't init yet)
 # TODO: Use sensor fusion with Kalman filter for better position
 # TODO: Make it os that the we init the robots orientation based off othe GPS (round it to the nearest 90 or 45 degrees), but make it so that drone mode still works
-# TODO: Use the gps and figure out how precise it is
-# TODO: Experiment not waiting in self.position_update()
 # TODO: Make odometry consistent with real world measurements
-# TODO: Figure out what negative voltage means and if we chilling with that
-# TODO: Avg. velocity
-# TODO: Tune pid controllers for flywheel
-# TODO: add intake
 
 # * IMPORTANT
 # TODO: Instead of rotating the driver control vector based off of the current theta, why not move it based off of the predicted theta/halfway between the two? this might remove the drifting that happens when rotation while moving
-# TODO: test out the custom robot print function
 # TODO: Work with david and figure out how to make robot driving feel better (more responsive, smooth, etc.)
 # TODO: Figure out variance in GPS sensor data and variance in model (Q and R)
-# TODO: Test out the cool Robot.print command and see if it prints on brain and console and how well it does so
 # TODO: make the offset of the gps so that it reports the position of the center of the robot
 # TODO: When the robot has an x,y position close to the edge of the field, make it so that the robot physically cannot slam into the wall (or use sensors)
 # TODO: Change this to be relative to the match time???
@@ -1676,13 +1615,8 @@ driver_control()
 # TODO: test to see if threads die when they lose scope
 # TODO: Figure out the sig figs of the inbuilt Timer class, if its good lets use it instead of time.time_ms
 # TODO: make an auto path class that has information like description, color, etc.
-# TODO: Research what the motor.set_max_torque function does
-# TODO: Research how to use motor.torqax_torque function does
-# TODO: Research how to use motor.torque
 # TODO: Research how to utilize motor.temperature
-# TODO: Make an info screen that showue
 # TODO: Make an info screen that shows if there are any status issues wrong with the robot
-# TODO: If you know that motor could be against the greater resistance that could stall it and overheat, you could limit the current to avoid overheating and raise it again when there is no resistance.
 
 # GPS
 # Starting = -152.5, 8.4
