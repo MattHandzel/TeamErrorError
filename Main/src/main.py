@@ -7,6 +7,14 @@ import random
 import vex
 import sys
 import json
+import matplotlib.pyplot as plt
+import numpy as np
+from math import sin, cos, pi, sqrt
+import math
+import time
+global g
+# Gravity, 10 is used for debugging
+g = -9.81
 
 # Brain should be defined by default
 brain = Brain()
@@ -88,6 +96,195 @@ def rotate_vector_2d(x, y, theta):
     y = x_old * math.sin(theta) + y * math.cos(theta)
 
     return x,y 
+
+def getPathOnXYFunction(funcs, delta_t = 0.01):
+  '''
+    Funcs - An array of two functions, the first one will return the x component of an objects trajectory at time point t, and the second will return the y component of an objects trajectory at time point t. It will run these function until the object hits the ground.
+
+    Returns an array of x positions, y positions, and the time it took to hit the ground
+  '''
+
+  # Get the x and y functions out of the functions array so that we can more intuitively refer to them
+  xFunc = funcs[0]
+  yFunc = funcs[1]
+
+  # Start off time at delta time (no need to compute the x and y positions at t=0 because we know that it will start on the group)
+  t = delta_t
+
+  # Create an array to store the x and y positions, initialize the array with the x and y positions at the first timestep
+  x = [xFunc(t)]
+  y = [yFunc(t)]
+  
+  # Run the functions until the y x of the function is less than 0 (the object has hit the ground)
+  while y[-1] > 0 and x[-1] > 0:
+    t += delta_t
+    x.append(xFunc(t))
+    y.append(yFunc(t))
+  return x, y, t
+
+def returnXYFuncs(theta, v_i):
+  '''This will return two funcions, for the x and y component of the objects path, depending upon the objects initial launch angle (theta) and initial velocity'''
+  return returnXFunc(theta, v_i), returnYFunc(theta, v_i)
+
+def returnXFunc(theta, v_i):
+  '''Returns the x component of the objects trajecotry using the following formula'''
+  return lambda t: cos(theta) * v_i * t
+
+def returnYFunc(theta, v_i):
+  ''' Returns the x component of the objects trajecotry using the following formula.'''
+  # NOTE: This function is assuming that you live on earth and thus acceleration is gravity
+  return lambda t: (1/2 * g * t * t + sin(theta) * v_i * t)
+
+def calculateRequiredInitialVelocityToPassThroughAPoint(coords):
+  '''
+  This is a function that I derived in order to calculate the required initial velocity for an object to pass through a point.
+  The formula for this equation is:
+
+         ______________________________________________
+         |         ____________________________________
+   v_i = |-2gy + __|((2gy)^2 - (4 * -(g^2 * x^2)))
+         |----------------------------------------------
+       __|                      2
+
+  '''
+  x = coords[0]
+  y = coords[1]
+
+  w = 2 * g * y
+  q = - g * g * x * x
+
+  squareRoot = sqrt((w * w) - (4 * q))
+  expression = (-w + squareRoot)/2
+
+  return (sqrt(expression))
+
+def getThetaForPathToHitPoint(v_i, point, sizeOfPoint = 0.05):
+  '''This function, when given the initial velocity required, will output the angle needed to shoot at.
+    point - point we want to hit
+    sizeOfPoint - the tolerance at which we can hit the point, at extereme initial velocities, this needs to be very high
+  '''
+  theta = 0
+  go = True
+  iterations = 0
+  minimum_distance = 0
+
+  # How this works is that it plots the trajectory of the object at changing angles of being shot, and it returns the correct angle once it is hit. This can be optimized by a hell of a lot and there is probably a mathetmatical formula that you can use to get the correct point in like 2 milliseconds buuuuuuut I already made a very good formula before that used a lot of brain power and Winter break was almost over so I settled on this solution, if I need to run this formula on a system that actually shoots things and is very time sensitive, then I will fix this, but otherwise there isn't a need to fix it. 
+  while go:
+    new_theta_1 = theta + (pi / 4) * 2 ** (-iterations)
+    new_theta_2 = theta - (pi / 4) * 2 ** (-iterations)
+
+    # Run a simulation for both new theta angles
+
+    _x, _y, _t = getPathOnXYFunction(returnXYFuncs(new_theta_1, v_i))
+    minimum_distance_theta_1 = float('inf')
+
+    # Find the point that is the closest to the point we want to hit
+    for x, y in zip(_x, _y):
+      distance = sqrt((x - point[0])**2 + (y - point[1])**2)
+      minimum_distance_theta_1 = min(minimum_distance_theta_1, distance)
+    
+    _x, _y, _t = getPathOnXYFunction(returnXYFuncs(new_theta_2, v_i))
+    minimum_distance_theta_2 = float('inf')
+
+    # Find the point that is the closest to the point we want to hit
+    for x, y in zip(_x, _y):
+      distance = sqrt((x - point[0])**2 + (y - point[1])**2)
+      minimum_distance_theta_2 = min(minimum_distance_theta_2, distance)
+    
+    # If the new theta angles are closer to the point we want to hit, then we will use those angles
+    if minimum_distance_theta_1 < minimum_distance_theta_2:
+      minimum_distance = minimum_distance_theta_1
+      theta = new_theta_1
+    else:
+      minimum_distance = minimum_distance_theta_2
+      theta = new_theta_2
+
+    # If the point we want to hit is within the tolerance, then we are done
+    if minimum_distance < sizeOfPoint:
+      go = False
+
+    iterations += 1
+    if iterations > 50:
+      print("Reached maximimum iterations!", theta)
+      go = False
+
+  return theta
+
+def getViForPathToHitPoint(theta, point, sizeOfPoint = 0.05):
+  '''This function, when given the initial velocity required, will output the angle needed to shoot at.
+    point - point we want to hit
+    sizeOfPoint - the tolerance at which we can hit the point, at extereme initial velocities, this needs to be very high
+  '''
+  vi = 0
+  go = True
+  iterations = 0
+  minimum_distance = 0
+  max_vi = 8.65
+  delta_time = 0.001
+  hit_time = 0
+
+  # How this works is that it plots the trajectory of the object at changing angles of being shot, and it returns the correct angle once it is hit. This can be optimized by a hell of a lot and there is probably a mathetmatical formula that you can use to get the correct point in like 2 milliseconds buuuuuuut I already made a very good formula before that used a lot of brain power and Winter break was almost over so I settled on this solution, if I need to run this formula on a system that actually shoots things and is very time sensitive, then I will fix this, but otherwise there isn't a need to fix it. 
+  while go:
+    new_vi_1 = vi + (max_vi / 2) * 2 ** (-iterations)
+    new_vi_2 = vi - (max_vi / 2) * 2 ** (-iterations)
+
+    # Run a simulation for both new vi angles
+
+    _x, _y, _t = getPathOnXYFunction(returnXYFuncs(theta, new_vi_1), delta_time)
+    minimum_distance_vi_1 = float('inf')
+    
+    hit_time_vi_1 = 0
+    
+    # Find the point that is the closest to the point we want to hit
+    for x, y in zip(_x, _y):
+      distance = sqrt((x - point[0])**2 + (y - point[1])**2)
+      minimum_distance_vi_1 = min(minimum_distance_vi_1, distance)
+      if minimum_distance_vi_1 == distance:
+        hit_time_vi_1 = (_x.index(x) + 1) * delta_time
+    
+    _x, _y, _t = getPathOnXYFunction(returnXYFuncs(theta, new_vi_2), delta_time)
+    minimum_distance_vi_2 = float('inf')
+    hit_time_vi_2 = 0
+    # Find the point that is the closest to the point we want to hit
+    for x, y in zip(_x, _y):
+      distance = sqrt((x - point[0])**2 + (y - point[1])**2)
+      minimum_distance_vi_2 = min(minimum_distance_vi_2, distance)
+      if minimum_distance_vi_2 == distance:
+        hit_time_vi_2 = (_x.index(x) + 1) * delta_time
+
+    # If the new vi angles are closer to the point we want to hit, then we will use those angles
+    if minimum_distance_vi_1 < minimum_distance_vi_2:
+      minimum_distance = minimum_distance_vi_1
+      vi = new_vi_1
+      hit_time = hit_time_vi_1
+    else:
+      minimum_distance = minimum_distance_vi_2
+      vi = new_vi_2
+      hit_time = hit_time_vi_2
+
+    # If the point we want to hit is within the tolerance, then we are done
+    if minimum_distance < sizeOfPoint:
+      go = False
+
+    iterations += 1
+    if iterations > 20:
+      go = False
+
+  return vi, hit_time
+
+def plotTrajectory(point, theta, v_i, plot = False, sizeOfPoint = 0.1):
+  '''This function will get the minimum initial velocity and angle at which you need to shoot the object at for a specific point, if you want to plot that then set plot to True.'''
+  
+  if plot:
+    _x, _y, _t = getPathOnXYFunction(returnXYFuncs(theta, v_i))
+    plt.plot(_x,_y, label = "Path of Object")
+    plt.plot(point[0], point[1], 'ro', label = "Goal")
+    plt.xlabel("X Position Of Object (m)")
+    plt.ylabel("Y Position Of Object (m)")
+    plt.title("Path of Object Towards A Goal Point")
+    plt.legend()
+  plt.show()
+  return v_i, theta
 
 class Vector:
     '''
@@ -208,6 +405,16 @@ class Robot:
     max_velocity: float
     max_acceleration: float
 
+    previous_x_from_encoders = 0
+    previous_y_from_encoders = 0
+
+    previous_x_from_gps = 0
+    previous_y_from_gps = 0
+
+    total_x_from_encoders = 0
+    total_y_from_encoders = 0
+
+
     ###* FLYWHEEL
     length: float = 38.1
 
@@ -222,6 +429,14 @@ class Robot:
 
     flywheel_speed = 0
 
+    flywheel_height_from_ground_IN = -99999
+
+    flywheel_motor_1_PID = PID(2, 0, 0)
+    flywheel_motor_2_PID = PID(2, 0, 0)
+
+    flywheel_motor_1_error = 0
+    flywheel_motor_2_error = 0
+
     ###* DRIVETRAIN
 
     previous_update_time: float = 0
@@ -235,61 +450,52 @@ class Robot:
     wheel_distance_CM_to_TICK_coefficient: float = (drivetrain_gear_ratio / 6 * 300) / \
         (math.pi * wheel_diameter_CM)
 
+    ###* PID controllers
 
-
-    # PID controller constants
+    # PID controllers
     motor_PID_kP = 10
     motor_PID_kI = 5
     motor_PID_kD = 0
-    
-    # Init the PID controllers for the robot
-    left_motor_a_PID = PID(motor_PID_kP,motor_PID_kI,motor_PID_kD)
-    right_motor_a_PID = PID(motor_PID_kP,motor_PID_kI,motor_PID_kD)
-    left_motor_b_PID = PID(motor_PID_kP,motor_PID_kI,motor_PID_kD)
-    right_motor_b_PID = PID(motor_PID_kP,motor_PID_kI,motor_PID_kD)
-    
+
     pos_PID_kP = 0.1
     pos_PID_kI = 0
     pos_PID_kD = 0
     x_pos_PID = PID(pos_PID_kP,pos_PID_kI,pos_PID_kD)
     y_pos_PID = PID(pos_PID_kP,pos_PID_kI,pos_PID_kD)
-    
+
     rotation_PID_kP = 0.1
     rotation_PID_kI = 0
     rotation_PID_kD = 0
     rotation_PID = PID(rotation_PID_kP,rotation_PID_kI,rotation_PID_kD)
 
-    previous_x_from_encoders = 0
-    previous_y_from_encoders = 0
+    left_motor_a_PID = PID(motor_PID_kP,motor_PID_kI,motor_PID_kD)
+    right_motor_a_PID = PID(motor_PID_kP,motor_PID_kI,motor_PID_kD)
+    left_motor_b_PID = PID(motor_PID_kP,motor_PID_kI,motor_PID_kD)
+    right_motor_b_PID = PID(motor_PID_kP,motor_PID_kI,motor_PID_kD)
+    
+    x_vel_PID = PID(0.1, 0, 0)
+    y_vel_PID = PID(0.1, 0, 0)
+    theta_vel_PID = PID(0.1, 0, 0)
 
-    # used to keep track of time in auto and driver mode respectively, use it for nicely logging data, can be used during either modes for end game/pathfinding rules
+    ###* 
+
+    # Used to keep track of time in auto and driver mode respectively, use it for nicely logging data, can be used during either modes for end game/pathfinding rules
     autonomous_timer = Timer()
     driver_controlled_timer = Timer()
-
-    previous_x_from_gps = 0
-    previous_y_from_gps = 0
-
-    total_x_from_encoders = 0
-    total_y_from_encoders = 0
-
-    flywheel_motor_1_PID = PID(2, 0, 0)
-    flywheel_motor_2_PID = PID(2, 0, 0)
-
-    flywheel_speed = 0
-
-    delta_time = 0
 
     target_reached = False
     position_tolerance = 3 # tolerance to target position in cm
     orientation_tolerance = 8 # tolerance to target orientation in degrees
     
+    # From 0,0 (which is the center of the field). Dimensions were got from page 89 on: https://content.vexrobotics.com/docs/2022-2023/vrc-spin-up/VRC-SpinUp-Game-Manual-2.2.pdf
     red_goal = GameObject((122.63 - 70.2) * 2.54, (122.63 - 70.2) * 2.54)
     blue_goal = GameObject(-(122.63 - 70.2) * 2.54, -(122.63 - 70.2) * 2.54)
 
-
-
     # State dictionary will hold ALL information about the robot
     '''
+        x_pos: X position of the robot
+        y_pos: Y position of the robot
+
     '''
     state = {
         # Orientation
@@ -328,13 +534,8 @@ class Robot:
     }
 
     target_state = {}
+    delta_time = 0
 
-    x_vel_PID = PID(0.1, 0, 0)
-    y_vel_PID = PID(0.1, 0, 0)
-    theta_vel_PID = PID(0.1, 0, 0)
-
-    flywheel_motor_1_error = 0
-    flywheel_motor_2_error = 0
 
     def __init__(self):
         '''
@@ -1179,7 +1380,9 @@ class Robot:
         delta_x = self.goal.x_pos - self.x_pos - self.flywheel_offset_x
         delta_y = self.goal.y_pos - self.y_pos - self.flywheel_offset_y
 
-        # TODO: Factor in the position of the flywheel
+        point = (self.goal.x_pos * 2.54 / 100, (self.goal.y_pos - self.flywheel_height_from_ground_IN) * 2.54 / 100)
+        v_i, hit_time = getViForPathToHitPoint(self.flywheel_angle, (point), sizeOfPoint = 0.001)
+        print("SETTING THE FLYWHEEL TO x M/S")
 
         # Compute the linear speed that the disk needs to be launched to
         # math.cos(theta_flywheel * DEG_TO_RAD)
@@ -1209,6 +1412,7 @@ class Robot:
         # Set the velocity to an amount to spin the roller
         # SPINING WITH POSITIVE POWER MAKES THE ROLLERS GO COUNTER CLOCKWISE
         roller_motor.set_velocity(-15, PERCENT)
+
         # Drive the robot to the right at half speed
         self.stop_moving()
         t = Timer()
@@ -1258,11 +1462,6 @@ class Robot:
             x_vector = x_vector / 4
             y_vector = y_vector / 4
             r_vector = r_vector / 4
-
-        # HAVE DAVID TRY THIS OUT (sqrt the input might be better for da vid)
-        # x_vector = (abs(_x_vector) ** (0.5)) * 10 * sign(_x_vector)
-        # y_vector = (abs(_y_vector) ** (0.5)) * 10 * sign(_y_vector)
-        # r_vector = (abs(_r_vector) ** (0.5)) * 10 * sign(_r_vector)
 
         # Get the motor powers
         left_motor_a_target_velocity = x_vector + y_vector + r_vector
@@ -1371,7 +1570,7 @@ straight_line = [{ 'x' : 0.0, 'y' : 0.0},{ 'x' : -0.6273756432246955, 'y' : 8.15
 mostyn = [{ 'x' : 0.0, 'y' : 0.0},{ 'x' : -0.63, 'y' : 4.39},{ 'x' : 0.0, 'y' : 10.04},{ 'x' : 0.0, 'y' : 13.8},{ 'x' : 0.0, 'y' : 20.08},{ 'x' : 0.63, 'y' : 32.0},{ 'x' : 1.25, 'y' : 42.66},{ 'x' : 1.88, 'y' : 53.95},{ 'x' : 1.88, 'y' : 63.36},{ 'x' : 1.88, 'y' : 72.78},{ 'x' : 1.88, 'y' : 80.3},{ 'x' : 1.25, 'y' : 87.21},{ 'x' : 0.63, 'y' : 93.48},{ 'x' : -0.63, 'y' : 99.13},{ 'x' : -1.88, 'y' : 104.77},{ 'x' : -2.51, 'y' : 110.42},{ 'x' : -3.76, 'y' : 116.06},{ 'x' : -4.39, 'y' : 122.34},{ 'x' : -5.02, 'y' : 127.98},{ 'x' : -5.02, 'y' : 134.26},{ 'x' : -5.02, 'y' : 140.53},{ 'x' : -4.39, 'y' : 146.18},{ 'x' : -4.39, 'y' : 151.2},{ 'x' : -3.76, 'y' : 156.84},{ 'x' : -3.14, 'y' : 161.24},{ 'x' : -3.14, 'y' : 162.49},{ 'x' : -3.14, 'y' : 163.75},{ 'x' : -3.14, 'y' : 165.0},{ 'x' : -3.14, 'y' : 166.25},{ 'x' : -3.14, 'y' : 167.51},{ 'x' : -3.14, 'y' : 168.76},{ 'x' : -1.25, 'y' : 170.02},{ 'x' : 0.63, 'y' : 171.27},{ 'x' : 3.76, 'y' : 171.9},{ 'x' : 6.9, 'y' : 173.16},{ 'x' : 11.29, 'y' : 173.78},{ 'x' : 16.31, 'y' : 175.04},{ 'x' : 21.33, 'y' : 176.29},{ 'x' : 26.98, 'y' : 176.92},{ 'x' : 32.62, 'y' : 178.17},{ 'x' : 42.66, 'y' : 178.8},{ 'x' : 50.19, 'y' : 180.06},{ 'x' : 60.23, 'y' : 180.06},{ 'x' : 63.99, 'y' : 180.06},{ 'x' : 72.15, 'y' : 180.06},{ 'x' : 79.68, 'y' : 178.8},{ 'x' : 85.95, 'y' : 176.92},{ 'x' : 92.85, 'y' : 174.41},{ 'x' : 98.5, 'y' : 171.27},{ 'x' : 101.01, 'y' : 169.39},{ 'x' : 106.03, 'y' : 165.63},{ 'x' : 111.05, 'y' : 161.24},{ 'x' : 115.44, 'y' : 156.84},{ 'x' : 119.83, 'y' : 151.82},{ 'x' : 124.22, 'y' : 146.81},{ 'x' : 127.98, 'y' : 141.79},{ 'x' : 131.12, 'y' : 136.77},{ 'x' : 134.26, 'y' : 131.12},{ 'x' : 136.77, 'y' : 125.48},{ 'x' : 139.28, 'y' : 119.83},{ 'x' : 141.79, 'y' : 114.18},{ 'x' : 143.67, 'y' : 108.54},{ 'x' : 145.55, 'y' : 102.26},{ 'x' : 146.81, 'y' : 95.99},{ 'x' : 147.43, 'y' : 90.34},{ 'x' : 147.43, 'y' : 82.81},{ 'x' : 146.81, 'y' : 75.91},{ 'x' : 146.18, 'y' : 67.76},{ 'x' : 143.67, 'y' : 59.6},{ 'x' : 139.9, 'y' : 51.44},{ 'x' : 135.51, 'y' : 42.66},{ 'x' : 131.12, 'y' : 34.51},{ 'x' : 126.1, 'y' : 26.98},{ 'x' : 120.46, 'y' : 20.08},{ 'x' : 114.81, 'y' : 13.8},{ 'x' : 109.16, 'y' : 8.78},{ 'x' : 106.65, 'y' : 6.27},{ 'x' : 100.38, 'y' : 1.88},{ 'x' : 94.11, 'y' : -1.25},{ 'x' : 88.46, 'y' : -3.76},{ 'x' : 82.19, 'y' : -5.65},{ 'x' : 75.29, 'y' : -6.27},{ 'x' : 72.15, 'y' : -6.9},{ 'x' : 65.25, 'y' : -6.27},{ 'x' : 58.97, 'y' : -5.65},{ 'x' : 52.07, 'y' : -4.39},{ 'x' : 45.8, 'y' : -3.76},{ 'x' : 39.52, 'y' : -1.88},{ 'x' : 33.25, 'y' : -0.63},{ 'x' : 26.98, 'y' : 0.63},{ 'x' : 21.33, 'y' : 2.51},{ 'x' : 16.31, 'y' : 4.39},{ 'x' : 11.29, 'y' : 5.65},{ 'x' : 6.9, 'y' : 6.27},]
 revamping_everthing = [{ 'x' : 0.0, 'y' : 0.0},{ 'x' : 0.0, 'y' : 1.88},{ 'x' : -0.63, 'y' : 3.14},{ 'x' : -0.63, 'y' : 4.39},{ 'x' : -0.63, 'y' : 6.27},{ 'x' : -1.25, 'y' : 7.53},{ 'x' : -1.25, 'y' : 10.67},{ 'x' : -1.88, 'y' : 13.8},{ 'x' : -1.88, 'y' : 22.59},{ 'x' : -1.88, 'y' : 28.23},{ 'x' : -2.51, 'y' : 35.76},{ 'x' : -2.51, 'y' : 41.41},{ 'x' : -3.14, 'y' : 47.05},{ 'x' : -2.51, 'y' : 52.07},{ 'x' : -1.88, 'y' : 56.46},{ 'x' : -1.25, 'y' : 60.86},{ 'x' : -0.63, 'y' : 64.62},{ 'x' : 0.0, 'y' : 69.01},{ 'x' : 0.63, 'y' : 72.78},{ 'x' : 0.63, 'y' : 77.79},{ 'x' : 1.88, 'y' : 80.93},{ 'x' : 2.51, 'y' : 82.81},{ 'x' : 3.76, 'y' : 85.32},{ 'x' : 5.65, 'y' : 87.21},{ 'x' : 7.53, 'y' : 90.34},{ 'x' : 9.41, 'y' : 91.6},{ 'x' : 10.67, 'y' : 93.48},{ 'x' : 11.92, 'y' : 94.11},{ 'x' : 13.8, 'y' : 94.73},{ 'x' : 15.06, 'y' : 95.36},{ 'x' : 16.31, 'y' : 95.99},{ 'x' : 17.57, 'y' : 95.99},{ 'x' : 18.82, 'y' : 95.99},{ 'x' : 20.08, 'y' : 95.99},{ 'x' : 21.33, 'y' : 95.36},{ 'x' : 22.59, 'y' : 94.73},{ 'x' : 24.47, 'y' : 94.11},{ 'x' : 25.72, 'y' : 92.85},{ 'x' : 27.6, 'y' : 90.97},{ 'x' : 27.6, 'y' : 89.71},{ 'x' : 28.86, 'y' : 88.46},{ 'x' : 29.49, 'y' : 86.58},{ 'x' : 30.11, 'y' : 84.7},{ 'x' : 30.11, 'y' : 82.19},{ 'x' : 30.74, 'y' : 80.93},{ 'x' : 31.37, 'y' : 78.42},{ 'x' : 31.37, 'y' : 75.29},{ 'x' : 32.0, 'y' : 72.78},{ 'x' : 32.62, 'y' : 69.64},{ 'x' : 32.62, 'y' : 65.87},{ 'x' : 32.62, 'y' : 62.11},{ 'x' : 32.62, 'y' : 57.72},{ 'x' : 32.62, 'y' : 52.7},{ 'x' : 33.25, 'y' : 49.56},{ 'x' : 33.25, 'y' : 47.68},{ 'x' : 33.25, 'y' : 43.92},{ 'x' : 33.25, 'y' : 40.15},{ 'x' : 33.88, 'y' : 34.51},{ 'x' : 33.88, 'y' : 30.74},{ 'x' : 33.88, 'y' : 26.98},{ 'x' : 33.88, 'y' : 24.47},{ 'x' : 33.88, 'y' : 20.7},{ 'x' : 33.88, 'y' : 16.31},{ 'x' : 34.51, 'y' : 12.55},{ 'x' : 34.51, 'y' : 10.04},{ 'x' : 35.13, 'y' : 7.53},{ 'x' : 35.76, 'y' : 5.65},{ 'x' : 36.39, 'y' : 3.76},{ 'x' : 37.64, 'y' : 2.51},{ 'x' : 38.9, 'y' : 0.0},{ 'x' : 39.52, 'y' : -1.88},{ 'x' : 40.78, 'y' : -2.51},{ 'x' : 42.66, 'y' : -3.76},{ 'x' : 44.54, 'y' : -5.02},{ 'x' : 47.05, 'y' : -6.27},{ 'x' : 48.94, 'y' : -6.9},{ 'x' : 53.33, 'y' : -5.65},{ 'x' : 57.09, 'y' : -5.02},{ 'x' : 58.35, 'y' : -3.76},{ 'x' : 59.6, 'y' : -2.51},{ 'x' : 60.86, 'y' : -1.25},{ 'x' : 62.74, 'y' : 1.88},{ 'x' : 63.99, 'y' : 3.76},{ 'x' : 65.25, 'y' : 6.9},{ 'x' : 65.87, 'y' : 10.67},{ 'x' : 67.13, 'y' : 14.43},{ 'x' : 67.13, 'y' : 16.31},{ 'x' : 68.38, 'y' : 20.08},{ 'x' : 68.38, 'y' : 25.1},{ 'x' : 69.01, 'y' : 29.49},{ 'x' : 69.64, 'y' : 34.51},{ 'x' : 70.27, 'y' : 39.52},{ 'x' : 70.89, 'y' : 45.8},{ 'x' : 70.89, 'y' : 48.94},{ 'x' : 71.52, 'y' : 54.58},{ 'x' : 73.4, 'y' : 65.25},{ 'x' : 73.4, 'y' : 73.4},{ 'x' : 74.66, 'y' : 82.81},{ 'x' : 74.66, 'y' : 90.34},{ 'x' : 75.91, 'y' : 97.24},{ 'x' : 76.54, 'y' : 102.26},{ 'x' : 77.17, 'y' : 107.28},{ 'x' : 77.79, 'y' : 108.54},{ 'x' : 78.42, 'y' : 107.28},{ 'x' : 80.3, 'y' : 106.65},{ 'x' : 82.19, 'y' : 106.03},{ 'x' : 84.07, 'y' : 106.65},{ 'x' : 86.58, 'y' : 106.65},{ 'x' : 89.09, 'y' : 106.03},{ 'x' : 91.6, 'y' : 106.03},{ 'x' : 94.11, 'y' : 105.4},{ 'x' : 95.36, 'y' : 105.4},{ 'x' : 97.87, 'y' : 104.77},{ 'x' : 100.38, 'y' : 104.14},{ 'x' : 102.26, 'y' : 103.52},{ 'x' : 104.14, 'y' : 102.26},{ 'x' : 106.03, 'y' : 101.01},{ 'x' : 107.28, 'y' : 100.38},{ 'x' : 109.16, 'y' : 98.5},{ 'x' : 110.42, 'y' : 96.62},{ 'x' : 111.67, 'y' : 94.11},{ 'x' : 112.3, 'y' : 92.85},{ 'x' : 112.93, 'y' : 90.97},{ 'x' : 113.55, 'y' : 89.09},{ 'x' : 114.18, 'y' : 87.83},{ 'x' : 114.18, 'y' : 85.95},{ 'x' : 114.81, 'y' : 84.7},{ 'x' : 115.44, 'y' : 82.19},{ 'x' : 115.44, 'y' : 80.93},{ 'x' : 115.44, 'y' : 79.68},{ 'x' : 115.44, 'y' : 76.54},{ 'x' : 115.44, 'y' : 74.03},{ 'x' : 115.44, 'y' : 70.89},{ 'x' : 115.44, 'y' : 67.13},{ 'x' : 114.81, 'y' : 63.36},{ 'x' : 114.81, 'y' : 58.97},{ 'x' : 114.18, 'y' : 55.21},{ 'x' : 113.55, 'y' : 51.44},{ 'x' : 113.55, 'y' : 48.31},{ 'x' : 113.55, 'y' : 45.8},{ 'x' : 113.55, 'y' : 44.54},{ 'x' : 112.93, 'y' : 40.78},{ 'x' : 112.93, 'y' : 38.9},{ 'x' : 112.93, 'y' : 36.39},{ 'x' : 112.93, 'y' : 34.51},{ 'x' : 112.93, 'y' : 32.62},{ 'x' : 112.93, 'y' : 30.74},{ 'x' : 112.93, 'y' : 28.86},{ 'x' : 112.3, 'y' : 26.98},{ 'x' : 112.93, 'y' : 25.1},{ 'x' : 112.93, 'y' : 23.21},{ 'x' : 112.93, 'y' : 21.96},{ 'x' : 113.55, 'y' : 20.08},{ 'x' : 113.55, 'y' : 18.82},{ 'x' : 113.55, 'y' : 17.57},{ 'x' : 113.55, 'y' : 16.31},{ 'x' : 113.55, 'y' : 15.06},{ 'x' : 114.18, 'y' : 13.8},{ 'x' : 114.18, 'y' : 12.55},{ 'x' : 114.18, 'y' : 11.29},{ 'x' : 114.18, 'y' : 10.04},{ 'x' : 114.18, 'y' : 8.78},{ 'x' : 114.18, 'y' : 7.53},{ 'x' : 113.55, 'y' : 6.27},{ 'x' : 113.55, 'y' : 5.02},{ 'x' : 111.67, 'y' : 3.76},{ 'x' : 107.28, 'y' : 2.51},{ 'x' : 104.77, 'y' : 1.88},{ 'x' : 97.24, 'y' : 0.63},{ 'x' : 92.85, 'y' : 0.63},{ 'x' : 89.71, 'y' : 0.63},{ 'x' : 80.93, 'y' : 0.63},{ 'x' : 78.42, 'y' : 0.63},{ 'x' : 69.01, 'y' : 0.63},{ 'x' : 60.86, 'y' : 0.63},{ 'x' : 53.95, 'y' : 1.88},{ 'x' : 46.43, 'y' : 2.51},{ 'x' : 40.15, 'y' : 3.76},{ 'x' : 33.88, 'y' : 5.02},{ 'x' : 27.6, 'y' : 5.65},{ 'x' : 21.33, 'y' : 6.27},{ 'x' : 15.68, 'y' : 6.27},{ 'x' : 9.41, 'y' : 6.9},{ 'x' : 3.76, 'y' : 6.27},{ 'x' : -1.88, 'y' : 5.65},{ 'x' : -5.65, 'y' : 5.65},{ 'x' : -9.41, 'y' : 5.02},]
 
-# END OF PATHS ######### END OF PATHS ######### END OF PATHS ######### END OF PATHS ######### END OF PATHS
+########## END OF PATHS ######### END OF PATHS ######### END OF PATHS ######### END OF PATHS ######### END OF PATHS
 
 def get_heading_to_object(gameobject_1, gameobject_2):
     '''
@@ -1403,9 +1602,7 @@ def get_heading_to_object(gameobject_1, gameobject_2):
     return ang
 
 ######## COMPETITION FUNCTIONS ### COMPETITION FUNCTIONS ### COMPETITION FUNCTIONS ### COMPETITION FUNCTIONS ###
-
 def autonomous():
-    # init() # Init a second time (Hopefully to fix the problem with the motors breaking for some reason)
     r.run_autonomous(simple_path)
     r.stop_moving()
 
@@ -1420,13 +1617,6 @@ def driver_control():
     r.driver_controlled_timer.reset()
 
     r.autonomous_timer.reset()
-
-    voltage_for_wheel = 0
-
-    flywheel_1_speed = 0
-    flywheel_2_speed = 0
-
-    flywheel_speed = 0
 
     while True:
         # Update the robot's information
@@ -1450,7 +1640,6 @@ def driver_control():
         #         "theta" : get_heading_to_object(r, r.goal)
         #     })
 
-
         r.update()
 
         # Timer to print things out to the terminal every x seconds
@@ -1458,13 +1647,6 @@ def driver_control():
             print(r.flywheel_speed, flywheel_motor_1.velocity(PERCENT), r.flywheel_1_avg_speed, flywheel_motor_2.velocity(PERCENT), r.flywheel_2_avg_speed)
             # print(r.x_pos, r.y_pos, r.theta, r.target_state["theta"])
             timer.reset()
-
-        # robot axis are based on x, y, and r vectors
-        # r.drive(controller_1.axis4.position(), controller_1.axis3.position(),
-        #         controller_1.axis1.position(), False, True)
-            
-        # r.slow_mode = controller_1.buttonR2.pressing()
-
 
         # Run the intake subsystem, set the desired speed
         # r.intake(controller_1.axis2.position())
@@ -1479,7 +1661,6 @@ def driver_control():
         elif controller_1.buttonRight.pressing():
             r.set_flywheel_speed(25)
             
-
         # if controller_1.buttonY.pressing():
         #     r.target_state["theta"] = get_heading_to_object(r, r.goal)
 
@@ -1516,6 +1697,7 @@ def init():
     flywheel_motor_1.spin(FORWARD, 0, VOLT)
     flywheel_motor_2.spin(FORWARD, 0, VOLT)
 
+    # 
     left_motor_a.set_velocity(0, PERCENT)
     right_motor_a.set_velocity(0, PERCENT)
     left_motor_b.set_velocity(0, PERCENT)
@@ -1536,6 +1718,7 @@ def init():
     intake_motor.spin(FORWARD)
     intake_motor.set_velocity(0, PERCENT)
 
+    # 
     roller_motor.spin(FORWARD)
     roller_motor.set_velocity(0, PERCENT)
     roller_motor.set_stopping(BRAKE)
@@ -1558,8 +1741,6 @@ def init():
     
     controller_1.rumble("...")
 
-# From 0,0 (which is the center of the field). Dimensions were got from page 89 on: https://content.vexrobotics.com/docs/2022-2023/vrc-spin-up/VRC-SpinUp-Game-Manual-2.2.pdf
-
 wheel_gear_ratio = 18
 ticks_per_revolution = 50 * wheel_gear_ratio
 
@@ -1579,7 +1760,6 @@ kP = 50
 kI = 0.01
 kD = 0
 r.flywheel_motor_1_PID.set_constants(kP,kI,kD)
-# r.flywheel_motor_2_PID.set_constants(kU * 0.33, 0.66 * kU / tU,-0.1111 * kU * tU)
 r.flywheel_motor_2_PID.set_constants(kP,kI,kD)
 
 r.x_vel_PID.set_constants(10,0,0)
@@ -1590,7 +1770,6 @@ init()
 
 # autonomous()
 driver_control()
-
 # competition = Competition(driver_control, autonomous)
 
 ##! PRIORITY
@@ -1617,39 +1796,3 @@ driver_control()
 # TODO: make an auto path class that has information like description, color, etc.
 # TODO: Research how to utilize motor.temperature
 # TODO: Make an info screen that shows if there are any status issues wrong with the robot
-
-# GPS
-# Starting = -152.5, 8.4
-# Ending = 133.8, 4.0
-
-# Starting = -152, 7.8
-# Ending 160, -10
-
-# Starting = -152, 1
-# Ending = 143, -5
-
-# ENCODERS
-# Starting = 0,0
-# Ending = 6.2, 303.4
-
-# Starting 0,0
-# Ending 16, 331 (Real, 123 3/4)
-
-# Starting 0,0
-# Ending = 0.4, 315, 117.5
-
-
-# Flywheel
-
-# no pid, direct control
-# 3.024 1.5, 2.23
-# 5.184 61, 48 
-
-
-# pid (1,0,0)
-# 1.108 0,0
-# 3.24 60, 50
-
-# pid (2,0,0)
-# 1.08, 0,0
-# 3.348 60, 51
