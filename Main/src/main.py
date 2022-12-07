@@ -594,22 +594,29 @@ class Robot:
     def roller_update(self):
         # Only if we have auto_roller enabled will we change the roller_speed
         if self["auto_roller"]:
-
-            # We want to only get information from the sensor if the object is found
-            if  roller_optical.is_near_object() and roller_optical.color() == Color.RED:
-                self["roller_state"] = "red"
-            elif roller_optical.is_near_object() and roller_optical.color() == Color.BLUE:
-                self["roller_state"] = "blue"
-            else:
+            if not roller_optical.is_near_object():
                 self["roller_state"] = "none"
-
-            if self["roller_state"] == "red" and self.notBlue:
-                self["roller_speed"] = -50
-            elif self["roller_state"] == "blue" and not self.notBlue:
-                self["roller_speed"] = 50
-            else:
                 self["roller_speed"] = 0
-            
+            else:
+                # If the sensor detects and object and if that object is red, or blue then run the roller
+                if roller_optical.color() == Color.RED:
+                    self["roller_state"] = "red"
+                elif roller_optical.is_near_object() and roller_optical.color() == Color.BLUE:
+                    self["roller_state"] = "blue"
+                else:
+                    self["roller_state"] = "none"
+
+                # If we detect that the roller is not our team's color, spin it
+                self["roller_speed"] = 0
+                if (self["roller_state"] == "red" and not self.notBlue) or (self["roller_state"] == "blue" and self.notBlue):
+                    self["roller_speed"] = 50
+
+                # This is a way to indicate to the drivers that we are done spinning the roller
+                if self["roller_state"] == "red" and self.notBlue:
+                    controller_1.rumble("-")
+                elif self["roller_state"] == "blue" and not self.notBlue:
+                    controller_1.rumble("-")
+
 
         roller_motor.spin(FORWARD, self["roller_speed"], PERCENT)
 
@@ -1105,46 +1112,39 @@ class Robot:
         self.flywheel_pid(self.flywheel_speed)        
     
     def flywheel_pid(self, speed):
-        MAX_FLYWHEEL_SPEED = 100 / 60
-        MAX_VOLTAGE = 10 # I don't think this is the true maximum voltage btw
+        # MAX_FLYWHEEL_SPEED = 100 / 60
+        MAX_VOLTAGE = 12 # I don't think this is the true maximum voltage btw
         
-        alpha = 0.1
+        alpha = 0.07
         self.flywheel_1_avg_speed = flywheel_motor_1.velocity(PERCENT) * alpha + self.flywheel_1_avg_speed * (1 - alpha)
         self.flywheel_2_avg_speed = flywheel_motor_2.velocity(PERCENT) * alpha + self.flywheel_2_avg_speed * (1 - alpha)
 
-        if speed < 20:
-            flywheel_motor_1.spin(REVERSE, 0, VOLT)
-            flywheel_motor_2.spin(REVERSE, 0, VOLT)
-            return
-
-        speed /= MAX_FLYWHEEL_SPEED
-
-        flywheel_motor_1.spin(FORWARD, speed, PERCENT)
-        flywheel_motor_2.spin(FORWARD, speed, PERCENT)
-
         # flywheel_motor_1.spin(FORWARD, speed, PERCENT)
         # flywheel_motor_2.spin(FORWARD, speed, PERCENT)
+
+        error_1 = speed - self.flywheel_1_avg_speed 
+        error_2 = speed - self.flywheel_2_avg_speed 
+
+        # error_1 = speed - flywheel_motor_1.velocity(VelocityUnits.PERCENT) 
+        # error_2 = speed - flywheel_motor_2.velocity(VelocityUnits.PERCENT) 
         
-        # error_1 = speed + flywheel_motor_1.velocity(VelocityUnits.PERCENT) 
-        # error_2 = speed + flywheel_motor_2.velocity(VelocityUnits.PERCENT) 
+        output_1 = self.flywheel_motor_1_PID.update(error_1)
+        output_2 = self.flywheel_motor_2_PID.update(error_2)
 
-        # output_1 = self.flywheel_motor_1_PID.update(error_1)
-        # output_2 = self.flywheel_motor_2_PID.update(error_2)
-
-        # output_1 = min(output_1, MAX_VOLTAGE)
-        # output_2 = min(output_2, MAX_VOLTAGE)
+        output_1 = min(output_1, MAX_VOLTAGE)
+        output_2 = min(output_2, MAX_VOLTAGE)
 
         # output_1 = max(output_1, 0)
         # output_2 = max(output_2, 0)
 
-        # output_1 = max(output_1, -MAX_VOLTAGE)
-        # output_2 = max(output_2, -MAX_VOLTAGE)
+        output_1 = max(output_1, -MAX_VOLTAGE)
+        output_2 = max(output_2, -MAX_VOLTAGE)
 
-        # flywheel_motor_1.spin(REVERSE, output_2, VOLT)
-        # flywheel_motor_2.spin(REVERSE, output_2, VOLT)
+        flywheel_motor_1.spin(FORWARD, output_2, VOLT)
+        flywheel_motor_2.spin(FORWARD, output_2, VOLT)
 
-        self.flywheel_motor_1_error = 0
-        self.flywheel_motor_2_error = 0
+        self.flywheel_motor_1_error = error_1
+        self.flywheel_motor_2_error = error_2
 
         # print("Error", error_1, error_2, "Velocity",flywheel_motor_1.velocity(VelocityUnits.PERCENT), "Output", output_1, output_2)
 
@@ -1453,9 +1453,9 @@ def driver_control():
         r.update()
 
         # Timer to print things out to the terminal every x seconds
-        if (timer.time() > 0.2 * 1000):
-            # print(flywheel_motor_1.velocity(PERCENT), flywheel_motor_2.velocity(PERCENT), r.flywheel_speed)
-            print(r.x_pos, r.y_pos, r.theta, r.target_state["theta"])
+        if (timer.time() > 0.1 * 1000):
+            print(r.flywheel_speed, flywheel_motor_1.velocity(PERCENT), r.flywheel_1_avg_speed, flywheel_motor_2.velocity(PERCENT), r.flywheel_2_avg_speed)
+            # print(r.x_pos, r.y_pos, r.theta, r.target_state["theta"])
             timer.reset()
 
         # robot axis are based on x, y, and r vectors
@@ -1470,13 +1470,13 @@ def driver_control():
 
         # r.set_flywheel_speed(controller_1.axis2.position())
         if controller_1.buttonUp.pressing():
-            r.set_flywheel_speed(100)
+            r.set_flywheel_speed(75)
         elif controller_1.buttonDown.pressing():
             r.set_flywheel_speed(0)
         elif controller_1.buttonLeft.pressing():
-            r.set_flywheel_speed(66)
+            r.set_flywheel_speed(50)
         elif controller_1.buttonRight.pressing():
-            r.set_flywheel_speed(33)
+            r.set_flywheel_speed(25)
             
 
         # if controller_1.buttonY.pressing():
@@ -1501,7 +1501,7 @@ def driver_control():
         if controller_1.buttonB.pressing():
             r.print_debug_info()
 
-        wait(0.1, SECONDS)
+        wait(0.01, SECONDS)
 
 def init():
     # Make it so that the motors stop instead of coast
@@ -1537,6 +1537,7 @@ def init():
 
     roller_motor.spin(FORWARD)
     roller_motor.set_velocity(0, PERCENT)
+    roller_motor.set_stopping(BRAKE)
 
     # Set the optical light power
     roller_optical.set_light_power(100)
@@ -1567,20 +1568,18 @@ r = Robot()
 
 r.set_team("red")
 
-# r.use_gps(gps.installed())
+r.using_gps = (gps.installed())
 r.using_gps = True
 r.drone_mode = True
 r.slow_mode = False
 r["auto_roller"] = True
 
-# kY = 0.2375
-# kU = 0.23
-kU = 1
-tU = 0.2375
-tU = 2
-r.flywheel_motor_1_PID.set_constants(kU,0,0)
+kP = 50 
+kI = kP / 3
+kD = 0
+r.flywheel_motor_1_PID.set_constants(kP,kI,kD)
 # r.flywheel_motor_2_PID.set_constants(kU * 0.33, 0.66 * kU / tU,-0.1111 * kU * tU)
-r.flywheel_motor_2_PID.set_constants(kU,0,0)
+r.flywheel_motor_2_PID.set_constants(kP,kI,kD)
 
 r.x_vel_PID.set_constants(10,0,0)
 r.y_vel_PID.set_constants(10,0,0)
