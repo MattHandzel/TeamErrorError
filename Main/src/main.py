@@ -30,7 +30,7 @@ flywheel_motor_1 = Motor(Ports.PORT17, GearSetting.RATIO_6_1, False)
 flywheel_motor_2 = Motor(Ports.PORT18, GearSetting.RATIO_6_1, True)
 
 led_a = Led(brain.three_wire_port.a)
-inertial = Inertial(Ports.PORT18)
+inertial = Inertial(Ports.PORT16)
 index_motor = Motor(Ports.PORT2, GearSetting.RATIO_18_1, False)
 roller_motor = Motor(Ports.PORT3, GearSetting.RATIO_18_1, False)
 intake_motor = Motor(Ports.PORT13, GearSetting.RATIO_18_1, False)
@@ -39,7 +39,7 @@ roller_optical = Optical(Ports.PORT12)
 indexer = Pneumatics(brain.three_wire_port.a)
 expansion = Pneumatics(brain.three_wire_port.b)
 
-gps = Gps(Ports.PORT12)
+gps = Gps(Ports.PORT13)
 
 global g
 g = -9.81
@@ -524,15 +524,12 @@ class Robot:
         Estimates the state of the robot
         '''
         self.state["time"] = getattr(time, "ticks_ms")() / 1000
-        self.theta_vel = inertial.gyro_rate(ZAXIS, VelocityUnits.DPS)
+        self.theta_vel = inertial.gyro_rate(ZAXIS)
 
         # is a magic number that makes the gyro work better (experimentall I found that when the gyro reported that it spun 1 time, it actually overshot by about 3 degrees)
         self.total_theta += self.theta_vel * self.delta_time / 0.99375 / 2
         
-        if self.using_gps:
-            self.theta = gps.heading()
-        else:
-            self.theta = self.total_theta - (self.total_theta // 360 * 360)
+        self.theta = self.total_theta - (self.total_theta // 360 * 360)
         
         # Use encoders to get our x and y positions so that we can take the derivative and get our velocity
         self.x_enc, self.y_enc = self.get_position_from_encoders()
@@ -554,7 +551,11 @@ class Robot:
         x_from_gps = 0
         y_from_gps = 0
         alpha = 0
+
         if self.using_gps and gps.quality() >= 100: 
+            print("INSIDE IF")    
+            self.total_theta = gps.heading()
+
             # Update alpha to value that uses gps
             alpha = 1
             x_from_gps = gps.x_position(DistanceUnits.CM)
@@ -1115,7 +1116,7 @@ class Robot:
         # MAX_FLYWHEEL_SPEED = 100 / 60
         MAX_VOLTAGE = 12 # I don't think this is the true maximum voltage btw
         
-        alpha = 0.07
+        alpha = 0.1
         self.flywheel_1_avg_speed = flywheel_motor_1.velocity(PERCENT) * alpha + self.flywheel_1_avg_speed * (1 - alpha)
         self.flywheel_2_avg_speed = flywheel_motor_2.velocity(PERCENT) * alpha + self.flywheel_2_avg_speed * (1 - alpha)
 
@@ -1134,11 +1135,11 @@ class Robot:
         output_1 = min(output_1, MAX_VOLTAGE)
         output_2 = min(output_2, MAX_VOLTAGE)
 
-        # output_1 = max(output_1, 0)
-        # output_2 = max(output_2, 0)
+        output_1 = max(output_1, 0)
+        output_2 = max(output_2, 0)
 
-        output_1 = max(output_1, -MAX_VOLTAGE)
-        output_2 = max(output_2, -MAX_VOLTAGE)
+        # output_1 = max(output_1, -MAX_VOLTAGE)
+        # output_2 = max(output_2, -MAX_VOLTAGE)
 
         flywheel_motor_1.spin(FORWARD, output_2, VOLT)
         flywheel_motor_2.spin(FORWARD, output_2, VOLT)
@@ -1429,7 +1430,7 @@ def driver_control():
 
     while True:
         # Update the robot's information
-        new_theta = controller_1.axis1.position() * 0.75 + r.theta
+        # new_theta = controller_1.axis1.position() * 0.75 + r.theta
         # if controller_1.axis1.position() == 0:
         #     new_theta = r.target_state["theta"]
 
@@ -1568,14 +1569,14 @@ r = Robot()
 
 r.set_team("red")
 
-r.using_gps = (gps.installed())
-r.using_gps = True
+# r.using_gps = gps.installed()
+r.using_gps = False
 r.drone_mode = True
 r.slow_mode = False
 r["auto_roller"] = True
 
-kP = 50 
-kI = kP / 3
+kP = 50
+kI = 0.01
 kD = 0
 r.flywheel_motor_1_PID.set_constants(kP,kI,kD)
 # r.flywheel_motor_2_PID.set_constants(kU * 0.33, 0.66 * kU / tU,-0.1111 * kU * tU)
