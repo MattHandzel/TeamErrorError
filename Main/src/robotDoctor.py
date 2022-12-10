@@ -40,6 +40,8 @@ class RobotDoctor:
       self.test_flywheel(test["comprehensive"])
     elif test == "flywheel_temp":
       self.test_flywheel_temp()
+    elif test == "gps":
+      self.test_gps(test["comprehensive"])
     else:
       self.r.print("Test not found!")
       controller_1.rumble("...---...")
@@ -80,8 +82,51 @@ class RobotDoctor:
       self.fail_test(f("Flywheel motor is too hot! 1:", flywheel_motor_1.temperature(), "2:", flywheel_motor_2.temperature()))
     else:
       self.pass_test("Flywheel test complete!")
+  
 
+  def test_gps(self, comprehensive):
+    path = [
+      {
+        "x" : 0,
+        "y" : 0,
+        "theta" : 0,
+      },
+      {
+        "x" : 100,
+        "y" : 100,
+        "theta" : 180,
+      },
+      {
+        "x" : 100,
+        "y" : -100,
+        "theta" : 0,
+      },
+      {
+        "x" : -100,
+        "y" : -100,
+        "theta" : -180,
+      },
+      {
+        "x" : -100,
+        "y" : 100,
+        "theta" : 0,
+      },
+      {
+        "x" : 0,
+        "y" : 0,
+        "theta" : 180,
+      },
+    ]
+
+
+    for point in path:
+      self.r.set_target_state(point)
+      self.r.print(("Robot should be going to...", point))
       
+      # Go to that position until the up button is pressed
+      while not controller_1.buttonUp.pressing():
+        self.r.print(f("X:", self.r.x_pos, "Y:", self.r.y_pos, "Theta:", self.r.theta))
+        wait(1, SECONDS)
         
         
 prematch_checks = [
@@ -112,7 +157,9 @@ all_tests = [
   Test(
     "flywheel_temp"
   ),
-
+  Test(
+    "gps"
+  )
 ]
 
 rd = RobotDoctor()
