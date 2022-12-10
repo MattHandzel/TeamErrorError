@@ -84,7 +84,8 @@ class Robot:
     y_vel_PID = PID(0.1, 0, 0)
     theta_vel_PID = PID(0.1, 0, 0)
 
-    ###* 
+    ###* MISC
+    update_loop_delay = 0.01  # 10 ms
 
     # Used to keep track of time in auto and driver mode respectively, use it for nicely logging data, can be used during either modes for end game/pathfinding rules
     autonomous_timer = Timer()
@@ -173,19 +174,23 @@ class Robot:
         
         # Set heading based on gps
         if self.using_gps:
+
+            # For some reason, the gps returns nan, just wait until it doesn't return nan
             while str(gps.heading()) == "nan":
-                print("waiting for gps", gps.heading())
+                print("Waiting for gps", gps.heading())
                 time.sleep(0.1)
-            # print("gps.heading at init:", gps.heading())
             self.theta_offset = gps.heading()
             self.total_theta = self.theta_offset
-            # self.theta_offset = gps.heading() / 90
-            # self.theta_offset = round(self.theta_offset) * 90
-            # print("gps heading roudned", self.theta_offset)
 
         self.set_target_state(self.state)
         self.previous_state = self.state
+        Thread(self.update_loop)
 
+
+    def update_loop(self):
+      while True:
+        self.update()
+        wait(self.update_loop_delay, SECONDS)
         
     
 
@@ -194,7 +199,6 @@ class Robot:
         This is a VERY important function, it should be called once every [0.1 - 0.01] seconds (the faster the better, especially for controls)
         It updates the robot's position based off of the encoders and the gyro
         '''
-
         self.delta_time = (getattr(time, "ticks_ms")() / 1000) - (self.previous_state["time"])
 
         # prevent divide by zero
