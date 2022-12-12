@@ -95,7 +95,6 @@ r = Robot()
 
 r.set_team("red")
 
-
 r.using_gps = gps.installed()
 r.drone_mode = True
 r.slow_mode = False
@@ -133,7 +132,6 @@ driver_control()
 # TODO: Make it os that the we init the robots orientation based off othe GPS (round it to the nearest 90 or 45 degrees), but make it so that drone mode still works
 # TODO: Make odometry consistent with real world measurements
 # TODO: Use trapazoids instead of rectangles when integrating the velocity
-
 
 # * IMPORTANT
 # TODO: Instead of rotating the driver control vector based off of the current theta, why not move it based off of the predicted theta/halfway between the two? this might remove the drifting that happens when rotation while moving
