@@ -3,9 +3,7 @@ from peripherals import brain
 
 class Button:
 
-  call_back: function 
-
-  def __init__(self, name = "", x = 0, y = 0, w = 0, h = 0, color = 0, call_back: function = function()):
+  def __init__(self, name = "", x = 0, y = 0, w = 0, h = 0, color = 0, call_back = None, *args):
     self.name = name
     self.x = x
     self.y = y
@@ -13,6 +11,7 @@ class Button:
     self.h = h
     self.color = color
     self.call_back = call_back
+    self.args = args
 
   def render(self):
     brain.screen.draw_rectangle(self.x, self.y, self.w, self.h, self.color)
@@ -23,13 +22,12 @@ class Button:
   
   # If we do something like button() then it will run the callback function
   def __call__(self):
-    self.call_back()
+    self.call_back(self.args)
 
 class Switch(Button):
   state = []
   def __init__(self, name = "", x = 0, y = 0, w = 0, h = 0, color = 0, call_back: function = function(), args = []):
     super().__init__(name, x, y, w, h, color, call_back)
-    self.
   
   def __call__(self):
     self.call_back()
@@ -66,11 +64,12 @@ class GUI:
       x, y = brain.screen.x_position(), brain.screen.y_position()
 
       for element in self.elements:
-        if abs(x - element.x) < element.w and (y - element.y) < element.h:
+        if abs(x - element.x) < element.w / 2 and (y - element.y) < element.h / 2:
           element()
     
   
   def render(self):
+    print("GUI.render()")
     for element in self.elements:
       element.render()
     

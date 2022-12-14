@@ -550,7 +550,7 @@ class Robot:
             message = "DRIVER" + message
         else:
             message = "MATCH_OVER" + message
-        print(message)
+        print("Robot.print",message)
         # brain.screen.print(message)
         
 
