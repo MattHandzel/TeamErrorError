@@ -536,6 +536,8 @@ class Robot:
     '''
     flywheel_1_voltage_factor = 0
     flywheel_2_voltage_factor = 0
+
+    previous_flywheel_speed = 0
     ###* ORIENTATION/POSITION VARIABLES
     total_theta = 0
     theta_offset = 0
@@ -563,8 +565,12 @@ class Robot:
     flywheel_1_avg_speed = 0
     flywheel_2_avg_speed = 0
 
-    previous_flywheel_1_avg_error = 0
-    previous_flywheel_2_avg_error = 0
+    previous_flywheel_1_avg_speed = 0
+    previous_flywheel_2_avg_speed = 0
+
+    previous_flywheel_1_error = 0
+    previous_flywheel_2_error = 0
+
 
     flywheel_speed = 0
 
@@ -1485,7 +1491,7 @@ class Robot:
         # MAX_FLYWHEEL_SPEED = 100 / 60
         MAX_VOLTAGE = 10 # I don't think this is the true maximum voltage btw
         
-        speed_alpha = 0.5
+        speed_alpha = 1
         self.flywheel_1_avg_speed = flywheel_motor_1.velocity(PERCENT) * speed_alpha + self.flywheel_1_avg_speed * (1 - speed_alpha)
         self.flywheel_2_avg_speed = flywheel_motor_2.velocity(PERCENT) * speed_alpha + self.flywheel_2_avg_speed * (1 - speed_alpha)
 
@@ -1514,31 +1520,31 @@ class Robot:
             self.flywheel_motor_1_average_output = 0
             self.flywheel_motor_2_average_output = 0
 
-        kU = 0.02
-        tU = 4
-
-        proportional_term_flywheel_1 = kU * 0.8 * (self.flywheel_speed - self.flywheel_1_avg_speed)
-        derivative_term_flywheel_1 = 0.125 * tU * 0.1 * kU * ((self.flywheel_speed - self.flywheel_1_avg_speed) - self.previous_flywheel_1_avg_error)
+        kP = 0.016
+        kD = 0.15
+        proportional_term_flywheel_1 = kP * (self.flywheel_speed - self.flywheel_1_avg_speed)
+        derivative_term_flywheel_1 = kD * (self.flywheel_1_avg_speed - self.previous_flywheel_1_avg_speed)
+        # error_helper_term_flywheel_1 = 0.01 * ((self.flywheel_speed - self.flywheel_1_avg_speed) - self.previous_flywheel_1_error) 
 
         derivative_term_flywheel_1 = max(derivative_term_flywheel_1, -1)
         derivative_term_flywheel_1 = min(derivative_term_flywheel_1, 1)
 
-        derivative_term_flywheel_1 = 0
+        # derivative_term_flywheel_1 = 0
 
-        proportional_term_flywheel_2 = kU * 0.8 * (self.flywheel_speed - self.flywheel_2_avg_speed)
-        derivative_term_flywheel_2 = 0.125 * tU * 0.1 * kU * ((self.flywheel_speed - self.flywheel_2_avg_speed) - self.previous_flywheel_2_avg_error)
+        proportional_term_flywheel_2 = kP * (self.flywheel_speed - self.flywheel_2_avg_speed)
+        derivative_term_flywheel_2 = kD * (self.flywheel_2_avg_speed - self.previous_flywheel_2_avg_speed)
+        # error_helper_term_flywheel_2 = 0.01 * ((self.flywheel_speed - self.flywheel_1_avg_speed) - self.previous_flywheel_1_error) 
 
         derivative_term_flywheel_2 = max(derivative_term_flywheel_2, -1)
         derivative_term_flywheel_2 = min(derivative_term_flywheel_2, 1)
 
-        derivative_term_flywheel_2 = 0
+        # derivative_term_flywheel_2 = 0
 
         # If we are more than 10 percent off of the target speed
         # if abs(self.flywheel_1_avg_speed - self.flywheel_speed) > 5:
-        self.flywheel_1_voltage_factor += proportional_term_flywheel_1 - derivative_term_flywheel_1
+        self.flywheel_1_voltage_factor += proportional_term_flywheel_1 - derivative_term_flywheel_1 + (self.flywheel_speed - self.previous_flywheel_speed) * 0.1
         # if abs(self.flywheel_2_avg_speed - self.flywheel_speed) > 5:
-        self.flywheel_2_voltage_factor += proportional_term_flywheel_2 - derivative_term_flywheel_2
-        
+        self.flywheel_2_voltage_factor += proportional_term_flywheel_2 - derivative_term_flywheel_2 + (self.flywheel_speed - self.previous_flywheel_speed) * 0.1
         if self.flywheel_1_voltage_factor > MAX_VOLTAGE:
             self.flywheel_1_voltage_factor = MAX_VOLTAGE
         if self.flywheel_2_voltage_factor > MAX_VOLTAGE:
@@ -1548,16 +1554,19 @@ class Robot:
         if self.flywheel_2_voltage_factor < -MAX_VOLTAGE:
             self.flywheel_2_voltage_factor = -MAX_VOLTAGE
 
-        flywheel_motor_1.spin(FORWARD, self.flywheel_1_voltage_factor, VOLT)
-        flywheel_motor_2.spin(FORWARD, self.flywheel_2_voltage_factor, VOLT)
+        flywheel_motor_1.spin(FORWARD, self.flywheel_1_voltage_factor + proportional_term_flywheel_1 * 2, VOLT)
+        flywheel_motor_2.spin(FORWARD, self.flywheel_2_voltage_factor + proportional_term_flywheel_2 * 2, VOLT)
 
-        self.flywheel_motor_1_error = (self.flywheel_1_avg_speed - self.previous_flywheel_1_avg_error)
-        self.flywheel_motor_2_error = (self.flywheel_2_avg_speed - self.previous_flywheel_2_avg_error)
+        self.flywheel_motor_1_error = (self.flywheel_1_avg_speed - self.previous_flywheel_1_avg_speed)
+        self.flywheel_motor_2_error = (self.flywheel_2_avg_speed - self.previous_flywheel_2_avg_speed)
 
         # Compute derivative of average flywheel speed
-        self.previous_flywheel_1_avg_error = self.flywheel_speed - self.flywheel_1_avg_speed
-        self.previous_flywheel_2_avg_error = self.flywheel_speed - self.flywheel_2_avg_speed
+        self.previous_flywheel_1_avg_speed = self.flywheel_1_avg_speed
+        self.previous_flywheel_2_avg_speed = self.flywheel_2_avg_speed
 
+        # self.previous_flywheel_1_error = self.flywheel_speed - self.flywheel_1_avg_speed
+        # self.previous_flywheel_2_error = self.flywheel_speed - self.flywheel_2_avg_speed
+        self.previous_flywheel_speed = float(self.flywheel_speed)
         # print("Error", error_1, error_2, "Velocity",flywheel_motor_1.velocity(VelocityUnits.PERCENT), "Output", output_1, output_2)
 
     
@@ -1919,11 +1928,11 @@ def driver_control():
         if controller_1.buttonUp.pressing():
             r.set_flywheel_speed(r.flywheel_speed + 5)
             r.flywheel_speed = min(r.flywheel_speed, 100)
-            wait(0.5, SECONDS)
+            wait(0.1, SECONDS)
         elif controller_1.buttonDown.pressing():
             r.set_flywheel_speed(r.flywheel_speed - 5)
             r.flywheel_speed = max(r.flywheel_speed, 0)
-            wait(0.5, SECONDS)
+            wait(0.1, SECONDS)
 
         if controller_1.buttonA.pressing():
             r.shoot_disk()
