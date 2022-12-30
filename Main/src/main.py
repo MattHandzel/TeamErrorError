@@ -53,6 +53,7 @@ vision = Vision(Ports.PORT15, 50, vision__DISC, vision__BRIGHT_DISK, vision__DIS
 
 DISC_SIGNATURES = [vision__DISC, vision__BRIGHT_DISK, vision__DISC_2, vision__DISC_4, vision__SIG_5, vision__SIG_6, vision__SIG_7]
 
+
 def init():
     # Make it so that the motors stop instead of coast
 
@@ -418,6 +419,8 @@ class GUI:
 
   elements = []
 
+  previous_brain_screen_state = False
+
   def __init__(self):
     pass
 
@@ -434,7 +437,7 @@ class GUI:
     #   self.render()
 
     # If the brain has been pressed ANYWHERE
-    if brain.screen.pressing():
+    if brain.screen.pressing() and not self.previous_brain_screen_state:
       # X and y positions of where the finger pressed
       x, y = brain.screen.x_position(), brain.screen.y_position()
       print("brain was pressed at", x, y, "")
@@ -452,6 +455,8 @@ class GUI:
         print("(x - element.x)", (x - element.x), "(y - element.y)", (y - element.y))
         if (x - element.x) > 0 and (x - element.x) < element.w and (y-element.y) > 0 and (y - element.y) < element.h:
           element()
+        
+    self.previous_brain_screen_state = brain.screen.pressing()
   
   def render(self):
     print("GUI.render()")
@@ -2124,6 +2129,8 @@ r.theta_vel_PID.set_constants(10,0,1)
 
 gui = GUI()
 
+
+
 gui.add_element(Switch(
     ["Team Blue", "Team Red"],
     0,
@@ -2170,7 +2177,7 @@ while True:
     gui.update()
     if brain.screen.pressing():
         print(brain.screen.x_position(), brain.screen.y_position())
-    wait(0.5, SECONDS)
+    wait(0.1, SECONDS)
 # autonomous()
 driver_control()
 # competition = Competition(driver_control, autonomous)
