@@ -339,7 +339,14 @@ class Button:
 
   def render(self):
     brain.screen.draw_rectangle(self.x, self.y, self.w, self.h, self.color)
-    brain.screen.print_at(self.name, x=self.x, y=self.y)
+
+    x_position_of_text = self.x + self.w / 2 - len(self.name) * 5
+    y_position_of_text = self.y + self.h / 2 + 5
+
+    x_position_of_text = max(x_position_of_text, self.x)
+    y_position_of_text = max(y_position_of_text, self.y)
+
+    brain.screen.print_at(self.name, x=x_position_of_text, y=y_position_of_text, opaque = False)
   
   def set_callback(self, function):
     self.call_back = function
@@ -350,6 +357,54 @@ class Button:
     self.call_back(*self.args)
 
 
+class Switch:
+    # A switch class is the same as a button class, but instead it has states and each state calls another function
+    # so for example, the switch class changes it colors when it changes states
+
+    needs_to_render = True
+
+    def __init__(self, name = [], x = 0, y = 0, w = 0, h = 0, color = [], states = [], *args):
+        self.name = name
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
+        self.states = states
+        self.current_state = 0
+        self.colors = color
+        self.args = args
+
+    def render(self):
+        brain.screen.draw_rectangle(self.x, self.y, self.w, self.h, self.colors[self.current_state])
+
+        x_position_of_text = self.x + self.w / 2 - len(self.name[self.current_state]) * 5
+        y_position_of_text = self.y + self.h / 2 + 5
+
+        x_position_of_text = max(x_position_of_text, self.x)
+        y_position_of_text = max(y_position_of_text, self.y)
+
+        brain.screen.print_at(self.name[self.current_state], x=x_position_of_text, y=y_position_of_text, opaque = False)
+
+    def set_states(self, states):
+        self.states = states
+
+    def set_state(self, state):
+        self.current_state = state
+
+    def change_state(self):
+        self.current_state = (self.current_state + 1) % len(self.states)
+        print("changing state to...", self.current_state)
+
+    def run_state(self):
+        self.states[self.current_state](*[arg[self.current_state] for arg in self.args])
+
+    def __call__(self):
+        self.change_state()
+        self.run_state()
+
+
+
+
 class GUI:
   '''
   What I want this class to do it to make a way for the drivers to interact with the brain screen and see some status
@@ -357,6 +412,8 @@ class GUI:
   from the brain what team we're on.
 
   Brain screen dimensions: 480 x 240 pizels. Top left is (0,0)
+
+  Each character is 10 x 10 pixels
   '''
 
   elements = []
@@ -380,15 +437,20 @@ class GUI:
     if brain.screen.pressing():
       # X and y positions of where the finger pressed
       x, y = brain.screen.x_position(), brain.screen.y_position()
-
+      print("brain was pressed at", x, y, "")
       # 37, 27; 45, 19; 
 
-        # 69, 110; 54, 118
+        # so if we're making a gui, the top left corner of the button gets drawn at its x and y position:
+
+        # that means to see if something is inside of the button, the x position has to be greater than the buttons x position, and the x position of click can not minus the width cannot be larger than the button's width
+        # same thing for y
 
         # bottom right 460, 213
         # bottom left 20, 213
       for element in self.elements:
-        if (x - element.x) < element.w and (y - element.y) < element.h and (x - element.x) > 0 and (y - element.y) > 0:
+        print("for element", self.elements.index(element), element.name, x, y, element.x, element.y, element.w, element.h)
+        print("(x - element.x)", (x - element.x), "(y - element.y)", (y - element.y))
+        if (x - element.x) > 0 and (x - element.x) < element.w and (y-element.y) > 0 and (y - element.y) < element.h:
           element()
   
   def render(self):
@@ -1009,6 +1071,7 @@ class Robot:
                 self.target_state[key] = _state[key]
                 
                 if key == "theta":
+                    print("setting theta to" , _state[key] % 360)
                     self.target_state[key] = _state[key] % 360
                 
 
@@ -1520,8 +1583,9 @@ class Robot:
             self.flywheel_motor_1_average_output = 0
             self.flywheel_motor_2_average_output = 0
 
-        kP = 0.016
+        kP = 0.015
         kD = 0.15
+
         proportional_term_flywheel_1 = kP * (self.flywheel_speed - self.flywheel_1_avg_speed)
         derivative_term_flywheel_1 = kD * (self.flywheel_1_avg_speed - self.previous_flywheel_1_avg_speed)
         # error_helper_term_flywheel_1 = 0.01 * ((self.flywheel_speed - self.flywheel_1_avg_speed) - self.previous_flywheel_1_error) 
@@ -1554,8 +1618,8 @@ class Robot:
         if self.flywheel_2_voltage_factor < -MAX_VOLTAGE:
             self.flywheel_2_voltage_factor = -MAX_VOLTAGE
 
-        flywheel_motor_1.spin(FORWARD, self.flywheel_1_voltage_factor + proportional_term_flywheel_1 * 2, VOLT)
-        flywheel_motor_2.spin(FORWARD, self.flywheel_2_voltage_factor + proportional_term_flywheel_2 * 2, VOLT)
+        flywheel_motor_1.spin(FORWARD, self.flywheel_1_voltage_factor + proportional_term_flywheel_1 * 0, VOLT)
+        flywheel_motor_2.spin(FORWARD, self.flywheel_2_voltage_factor + proportional_term_flywheel_2 * 0, VOLT)
 
         self.flywheel_motor_1_error = (self.flywheel_1_avg_speed - self.previous_flywheel_1_avg_speed)
         self.flywheel_motor_2_error = (self.flywheel_2_avg_speed - self.previous_flywheel_2_avg_speed)
@@ -1893,7 +1957,21 @@ def driver_control():
     r.driver_controlled_timer.reset()
 
     r.autonomous_timer.reset()
-
+    
+    previous_controller_states = {
+        "buttonL1" : controller_1.buttonL1.pressing(),
+        "buttonR1" : controller_1.buttonR1.pressing(),
+        "buttonL2" : controller_1.buttonL2.pressing(),
+        "buttonR2" : controller_1.buttonR2.pressing(),
+        "buttonUp" : controller_1.buttonUp.pressing(),
+        "buttonDown" : controller_1.buttonDown.pressing(),
+        "buttonLeft" : controller_1.buttonLeft.pressing(),
+        "buttonRight" : controller_1.buttonRight.pressing(),
+        "buttonX" : controller_1.buttonX.pressing(),
+        "buttonY" : controller_1.buttonY.pressing(),
+        "buttonA" : controller_1.buttonA.pressing(),
+        "buttonB" : controller_1.buttonB.pressing(),
+    }
 
     while True:
         # Update the robot's information
@@ -1924,48 +2002,90 @@ def driver_control():
             # print(r.state["override_velocity_x"], r.state["override_velocity_y"], r.state["theta"])
             # print(r.x_pos, r.y_pos, r.theta, r.target_state["theta"])
             timer.reset()
-    
-        if controller_1.buttonUp.pressing():
+
+
+        # When the buttons are pressed increment flywheel speed
+        if controller_1.buttonR2.pressing() and not previous_controller_states["buttonR2"]:
             r.set_flywheel_speed(r.flywheel_speed + 5)
             r.flywheel_speed = min(r.flywheel_speed, 100)
-            wait(0.1, SECONDS)
-        elif controller_1.buttonDown.pressing():
+        elif controller_1.buttonL2.pressing() and not previous_controller_states["buttonL2"]:
             r.set_flywheel_speed(r.flywheel_speed - 5)
             r.flywheel_speed = max(r.flywheel_speed, 0)
-            wait(0.1, SECONDS)
 
         if controller_1.buttonA.pressing():
-            r.shoot_disk()
-            wait(1, SECONDS)
+            r.set_target_state({
+                "theta" : 90,
+            })
         
-        # if controller_1.buttonL1.pressing():
-        #     r.state["roller_speed"] = 100
-        # elif controller_1.buttonR1.pressing():
-        #     r.state["roller_speed"] = -100
-        # else:
-        #     r.state["roller_speed"] = 0
-
-            
-        if not controller_1.buttonX.pressing():
-            reset_theta_timer.reset()
-
-        # If someone has pressed button x for more than 1 second, reset the orientaiton
-        if reset_theta_timer.value() > 1:
-            print("Resetting the orientation of the robot!!")
-            r.reset_theta()
-            controller_1.rumble("...")
-            reset_theta_timer.reset()
-
-        if controller_1.buttonB.pressing():
-            r.print_debug_info()
-
         if controller_1.buttonY.pressing():
-            expansion.open()
+            r.set_target_state({
+                "theta" : -90,
+            })
+        # If only the x button is being pressed then rotate the robot to 0 deg, 
+        # if the x and a button is pressed, rotate to 45, if a and y pressed
+        # rotate to -45 deg
+        if controller_1.buttonX.pressing():
+            if controller_1.buttonA.pressing():
+                r.set_target_state({
+                    "theta" : 45,
+                })
+            elif controller_1.buttonY.pressing():
+                r.set_target_state({
+                    "theta" : -45,
+                })
+            else:
+                r.set_target_state({
+                    "theta" : 0,
+                })
 
+        # If only the b button is being pressed then rotate the robot to 180 deg,
+        # if the b and a button is pressed rotate to 45, if b and y is presed
+        # rotate to -135 deg
+        if controller_1.buttonB.pressing():
+            if controller_1.buttonA.pressing():
+                r.set_target_state({
+                    "theta" : 135,
+                })
+            elif controller_1.buttonY.pressing():
+                r.set_target_state({
+                    "theta" : -135,
+                })
+            else:
+                r.set_target_state({
+                    "theta" : 180,
+                })
+        
 
         
-        # r.print(f("Pos:", r.x_pos, r.y_pos, r.theta))
+        
+        # If someone has pressed button x for more than 1 second, reset the orientaiton
+        # if reset_theta_timer.value() > 1:
+        #     print("Resetting the orientation of the robot!!")
+        #     r.reset_theta()
+        #     controller_1.rumble("...")
+        #     reset_theta_timer.reset()
 
+        # if controller_1.buttonB.pressing():
+        #     r.print_debug_info()
+
+        # if controller_1.buttonY.pressing():
+        #     expansion.open()
+
+        # Update previous controller states so we can track what the controller did before, we use this so that we can see if a button was pressed, not held, etc.
+        previous_controller_states = {
+            "buttonL1" : controller_1.buttonL1.pressing(),
+            "buttonR1" : controller_1.buttonR1.pressing(),
+            "buttonL2" : controller_1.buttonL2.pressing(),
+            "buttonR2" : controller_1.buttonR2.pressing(),
+            "buttonUp" : controller_1.buttonUp.pressing(),
+            "buttonDown" : controller_1.buttonDown.pressing(),
+            "buttonLeft" : controller_1.buttonLeft.pressing(),
+            "buttonRight" : controller_1.buttonRight.pressing(),
+            "buttonX" : controller_1.buttonX.pressing(),
+            "buttonY" : controller_1.buttonY.pressing(),
+            "buttonA" : controller_1.buttonA.pressing(),
+            "buttonB" : controller_1.buttonB.pressing(),
+        }
         wait(0.01, SECONDS)
 
 
@@ -2004,27 +2124,33 @@ r.theta_vel_PID.set_constants(10,0,1)
 
 gui = GUI()
 
-gui.add_element(Button(
-    "Set Team Blue",
+gui.add_element(Switch(
+    ["Team Blue", "Team Red"],
     0,
     0,
-    100,
-    50,
-    Color.BLUE,
-    r.set_team,
-    "blue"
+    480,
+    240,
+    [Color.BLUE, Color.RED],
+    [r.set_team] * 2,
+    ["blue", "red"]
 ))
 
-gui.add_element(Button(
-    "Set Team Red",
-    000,
-    100,
-    100,
-    50,
-    Color.RED,
-    r.set_team,
-    "red"
-))
+def change_drone_mode(value):
+    r.drone_mode = value
+    print("r.drone_mode =",r.drone_mode)
+
+# gui.add_element(Switch(
+#     ["Drone Mode", "Robot Mode"],
+#     200,
+#     100,
+#     200,
+#     50,
+#     [Color(0x888888), Color.BLACK],
+#     [change_drone_mode] * 2,
+#     (True, False),
+# ))
+
+
 ######### GUI ######### GUI ######### GUI ######### GUI ######### GUI ######### GUI #########
 
 init()
@@ -2039,11 +2165,12 @@ r.using_gps = False
 gui.render()
 
 
-# while True:
-#     gui.update()
-#     if brain.screen.pressing():
-#         print(brain.screen.x_position(), brain.screen.y_position())
-#     wait(0.5, SECONDS)
+while True:
+    gui.render()
+    gui.update()
+    if brain.screen.pressing():
+        print(brain.screen.x_position(), brain.screen.y_position())
+    wait(0.5, SECONDS)
 # autonomous()
 driver_control()
 # competition = Competition(driver_control, autonomous)
@@ -2062,9 +2189,8 @@ driver_control()
 # TODO: Use trapazoids instead of rectangles when integrating the velocity
 # TODO: OMG WE CAN SAVE FILES TO THE SD CARD
 # TODO: See if we can register callback functions instead of checking things in the updates and see how much that will improve performance
-# TODO: Automatic disk pickup
 # TODO: Test auto roller function as well as make driver control work as well as previous drive function
-
+# TODO: Make slowest flywheel speed like 15 percent or someting
 
 # * IMPORTANT
 # TODO: Instead of rotating the driver control vector based off of the current theta, why not move it based off of the predicted theta/halfway between the two? this might remove the drifting that happens when rotation while moving
