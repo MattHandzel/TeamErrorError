@@ -1,0 +1,18 @@
+{
+	"extension": {
+		"version": "0.3.0",
+		"json": 1
+	},
+	"project": {
+		"name": "Temp",
+		"description": "",
+		"creationDate": "11/21/2022, 3:15:25 PM",
+		"platform": "V5",
+		"language": "python",
+		"slot": 6,
+		"sdkVersion": "V5_1_0_1_14",
+		"python": {
+			"main": "src/main.py"
+		}
+	}
+}
