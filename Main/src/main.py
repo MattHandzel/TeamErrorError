@@ -44,14 +44,14 @@ expansion = Pneumatics(brain.three_wire_port.b)
 gps = Gps(Ports.PORT13)
 vision__DISC = Signature(1, 6911, 8133, 7522,-6787, -5937, -6362,1.3, 0)
 vision__BRIGHT_DISK = Signature(2, 217, 491, 354,-7169, -6839, -7004,3, 0)
-vision__DISC_2 = Signature(3, 0, 0, 0,0, 0, 0,3, 0)
+vision_15__SIG_1 = Signature(1, 1101, 2123, 1612,-5789, -4977, -5383,1.4, 0)
 vision__DISC_4 = Signature(4, 0, 0, 0,0, 0, 0,3, 0)
 vision__SIG_5 = Signature(5, 0, 0, 0,0, 0, 0,3, 0)
 vision__SIG_6 = Signature(6, 0, 0, 0,0, 0, 0,3, 0)
 vision__SIG_7 = Signature(7, 0, 0, 0,0, 0, 0,3, 0)
-vision = Vision(Ports.PORT15, 50, vision__DISC, vision__BRIGHT_DISK, vision__DISC_2, vision__DISC_4, vision__SIG_5, vision__SIG_6, vision__SIG_7)
+vision = Vision(Ports.PORT15, 50, vision__DISC, vision__BRIGHT_DISK, vision_15__SIG_1, vision__DISC_4, vision__SIG_5, vision__SIG_6, vision__SIG_7)
 
-DISC_SIGNATURES = [vision__DISC, vision__BRIGHT_DISK, vision__DISC_2, vision__DISC_4, vision__SIG_5, vision__SIG_6, vision__SIG_7]
+DISC_SIGNATURES = [vision__DISC, vision__BRIGHT_DISK, vision_15__SIG_1, vision__DISC_4, vision__SIG_5, vision__SIG_6, vision__SIG_7]
 
 
 def init():
@@ -354,8 +354,41 @@ class Button:
   
   # If we do something like button() then it will run the callback function
   def __call__(self):
-    print("Button.call", self.args)
-    self.call_back(*self.args)
+    if self.call_back != None:
+        # If self is a variable in the call_back function then pass self as the button 
+        self.call_back(*self.args)
+
+class Text:
+    def __init__(self, name = "", x = 0, y = 0, w = 0, h = 0, color = 0, call_back = None, *args):
+        self.name = name
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
+        self.color = color
+        self.call_back = call_back
+        self.args = args
+
+    def render(self):
+        # If there is a call back function, then call it and set the name to the return value
+        if self.call_back != None:
+            self.name = self.call_back(*self.args)
+
+        brain.screen.draw_rectangle(self.x, self.y, self.w, self.h, self.color)
+
+        x_position_of_text = self.x + self.w / 2 - len(self.name) * 5
+        y_position_of_text = (self.y + self.h / 2) + 5
+
+        x_position_of_text = max(x_position_of_text, self.x)
+        y_position_of_text = max(y_position_of_text, self.y)
+        
+        brain.screen.print_at(self.name, x=x_position_of_text, y=y_position_of_text, opaque = False)
+    
+    def __call__(self):
+        # this does literllay nothing
+        if self.call_back != None:
+            self.name = self.call_back(*self.args)
+
 
 
 class Switch:
@@ -370,7 +403,10 @@ class Switch:
         self.y = y
         self.w = w
         self.h = h
-        self.states = states
+        if type(states) == list:
+            self.states = states
+        else:
+            self.states = [states] * len(args[0])
         self.current_state = 0
         self.colors = color
         self.args = args
@@ -440,7 +476,6 @@ class GUI:
     if brain.screen.pressing() and not self.previous_brain_screen_state:
       # X and y positions of where the finger pressed
       x, y = brain.screen.x_position(), brain.screen.y_position()
-      print("brain was pressed at", x, y, "")
       # 37, 27; 45, 19; 
 
         # so if we're making a gui, the top left corner of the button gets drawn at its x and y position:
@@ -451,15 +486,13 @@ class GUI:
         # bottom right 460, 213
         # bottom left 20, 213
       for element in self.elements:
-        print("for element", self.elements.index(element), element.name, x, y, element.x, element.y, element.w, element.h)
-        print("(x - element.x)", (x - element.x), "(y - element.y)", (y - element.y))
         if (x - element.x) > 0 and (x - element.x) < element.w and (y-element.y) > 0 and (y - element.y) < element.h:
           element()
         
     self.previous_brain_screen_state = brain.screen.pressing()
   
   def render(self):
-    print("GUI.render()")
+    brain.screen.clear_screen()
     for element in self.elements:
       element.render()
     
@@ -707,7 +740,16 @@ class Robot:
     red_goal = GameObject((122.63 - 70.2) * 2.54, (122.63 - 70.2) * 2.54)
     blue_goal = GameObject(-(122.63 - 70.2) * 2.54, -(122.63 - 70.2) * 2.54)
 
-
+    flywheel_speed_levels = [
+        20,
+        25,
+        30,
+        35,
+        40,
+        45,
+        50,
+        55,
+    ]
     
     # State dictionary will hold ALL information about the robot
     '''
@@ -740,10 +782,14 @@ class Robot:
         
         # Intake
         "auto_intake" : False,
+        "disc_in_intake" : False,
 
         # Actuators
         "flywheel_speed" : 0,
         "intake_speed" : 0,
+
+        # expansion
+        "launch_expansion" : False,
 
         # Commands
         "using_gps" : False,
@@ -763,6 +809,8 @@ class Robot:
 
     save_states = False
 
+    path = []
+
     def __init__(self):
         '''
         Initializes the robot class, computes the max velocity and acceleration
@@ -781,6 +829,7 @@ class Robot:
         # Set origin of the gps
         gps.set_origin(0,0)
 
+        self.initial_state = self.state.copy()
         self.set_target_state(self.state)
         self.previous_state = self.state
     
@@ -824,12 +873,24 @@ class Robot:
 
         # Update the previous state before doing state estimation
         self.previous_state = self.state.copy()
+
+        # Estimate our current position
         self.estimate_state()
 
+        # All controls for movement, pid control for robot 
         self.position_update()
+
+        # All of the updates needed for the flywheel, including pid control
         self.flywheel_update()
-        self.intake_update()
+
+        # All of code for roller, including auto roller
         self.roller_update()
+        
+        # All of the code and checks for the intake, allows for auto intake and manual control
+        self.intake_update()
+
+        # Run all the code needed for the expansion
+        self.expansion_update()
 
     
     def position_update(self):
@@ -943,6 +1004,11 @@ class Robot:
         # print("left_motor_b_target_velocity ", left_motor_b_target_velocity)
         # print("right_motor_b_target_velocity ", right_motor_b_target_velocity)
         # print("")
+    
+    def expansion_update(self):
+        if self.target_state["launch_expansion"]:
+            expansion.open()
+        
             
     
     def estimate_state(self):
@@ -1016,27 +1082,19 @@ class Robot:
     def intake_update(self):
         # If we have auto_intake enbaled 
         if self["auto_intake"]:
-            
             objs = [vision.take_snapshot(z) for z in range(8)]
             objs = [obj for obj in objs if obj]
-            print([obj for obj in objs])
-            if len(objs)  > 1:
+            if len(objs) > 1:
                 self.intake_speed = 100
-                self["disk_near_intake"] = True
+                self["disc_in_intake"] = True
                 self.intake_timer.reset()
-            if self.intake_timer.time() > 2000: # If it has been more than 1 second since we last saw a disc, stop intake
+            elif self.intake_timer.time(MSEC) > 2000: # If it has been more than 1 second since we last saw a disc, stop intake
                 self.intake_speed = 0
-                self["disk_near_intake"] = False
+                self["disc_in_intake"] = False
 
-
-        
         roller_and_intake_motor_1.spin(REVERSE, self.intake_speed, VelocityUnits.PERCENT)
         roller_and_intake_motor_2.spin(FORWARD, self.intake_speed, VelocityUnits.PERCENT)
         
-
-
-
-    
     def roller_update(self):
         # Only if we have auto_roller enabled will we change the roller_speed
         if self["auto_roller"]:
@@ -1062,8 +1120,10 @@ class Robot:
                     controller_1.rumble("-")
                     if self.previous_state["roller_state"] != self["roller_state"]:
                         self["roller_speed"] = -50
-                        
-        # roller_and_intake_motor.spin(FORWARD, self["roller_speed"], VelocityUnits.PERCENT)
+        
+        if not self["disc_in_intake"]:
+            roller_and_intake_motor_1.spin(REVERSE, self["roller_speed"], VelocityUnits.PERCENT)
+            roller_and_intake_motor_2.spin(REVERSE, self["roller_speed"], VelocityUnits.PERCENT)
 
 ##### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ###
     def set_target_state(self, _state):
@@ -1076,18 +1136,30 @@ class Robot:
                 self.target_state[key] = _state[key]
                 
                 if key == "theta":
-                    print("setting theta to" , _state[key] % 360)
                     self.target_state[key] = _state[key] % 360
-                
-
-
-        self.update_constants()
+                    print("setthing theta to", _state[key])
+            
+        self.update_constants(_state)
         self.target_reached = False
     
-    def update_constants(self):
-        self.drone_mode = self.target_state["drone_mode"]
-        self.slow_mode = self.target_state["slow_mode"]
-        self.using_gps = self.target_state["using_gps"]
+    def update_constants(self, _state):
+        if "drone_mode" in _state:
+            self.drone_mode = _state["drone_mode"]
+        if "slow_mode" in _state:
+            self.slow_mode = _state["slow_mode"]
+        if "using_gps" in _state:
+            self.using_gps = _state["using_gps"]
+        if "intake_speed" in _state:  
+            self.intake_speed = _state["intake_speed"]
+        if "roller_speed" in _state:
+            self.roller_speed = _state["roller_speed"]
+        if "auto_intake" in _state:
+            self.auto_intake = _state["auto_intake"]
+        if "auto_roller" in _state:
+            self.auto_roller = _state["auto_roller"]
+        if "flywheel_speed" in _state:
+            self.flywheel_speed = _state["flywheel_speed"]
+
     
     def __setitem__(self, key, value):
         self.state[key] = value
@@ -1211,99 +1283,6 @@ class Robot:
         return self.x_pos, self.y_pos
         # return self.get_position_from_encoders()
 
-    # Target position in cm
-    def go_to_position(self, _target_x, _target_y, _pid=False, _pidDistanceThreshold=1):
-        '''
-        Function that will move the robot to a target position
-        params: _target_x is the target x position in cm (from the origin)
-                _target_y is the target y position in cm (from the origin)
-                _pid is a boolean that will determine if the robot will use PID or not
-                _pidDistanceThreshold is the distance threshold in cm that the robot uses to determin if it's close enough to the target point
-        '''
-        # Offset the target position by the robot's current position
-        delta_x = _target_x - self.x_pos
-        delta_y = _target_y - self.y_pos
-
-        # self.x_pos = _target_x
-        # self.y_pos =_target_y
-
-        if not _pid:
-            # These are the target position for each wheel, you find the target positions by finding the direction the wheels
-            # are pointing in and then multiplying by the sin(theta) for the x and cos(theta) for theta
-
-            x_pos, y_pos = self.get_position()
-
-            while abs(x_pos - _target_x) > 5 or abs(y_pos - _target_y) > 5:
-                x_pos, y_pos = self.get_position()
-
-                # Speed towards target will be controlled by PID loop
-                error_x = _target_x - x_pos
-                error_y = _target_y - y_pos
-                
-                # Prevent divide by 0 error
-                theta_to_target = 0
-                if error_x != 0:
-                    theta_to_target = math.atan(error_y / (error_x))
-                    
-                    # If theta_to_target is less than 0, then add 180 degrees
-                    theta_to_target += math.pi * (error_x < 0)
-
-                print(x_pos, y_pos, theta_to_target * RAD_TO_DEG)
-
-                self.drive(math.cos(theta_to_target) * 20, math.sin(theta_to_target)
-                           * 20, 0, square_input=False)
-                wait(0.1, SECONDS)
-            print("Done!") 
-
-        else:
-            left_motor_a_target_position = delta_x * self.wheel_distance_CM_to_TICK_coefficient * \
-                r2o2 + delta_y * self.wheel_distance_CM_to_TICK_coefficient * r2o2
-            right_motor_a_target_position = -delta_x * self.wheel_distance_CM_to_TICK_coefficient * \
-                r2o2 + delta_y * self.wheel_distance_CM_to_TICK_coefficient * r2o2
-            left_motor_b_target_position = -delta_x * self.wheel_distance_CM_to_TICK_coefficient * \
-                r2o2 + delta_y * self.wheel_distance_CM_to_TICK_coefficient * r2o2
-            right_motor_b_target_position = delta_x * self.wheel_distance_CM_to_TICK_coefficient * \
-                r2o2 + delta_y * self.wheel_distance_CM_to_TICK_coefficient * r2o2
-
-            # PID loop here for each wheel
-            x_pos, y_pos = self.get_position()
-            
-            # Reset all PID controllers
-            self.left_motor_a_PID.reset()
-            self.right_motor_a_PID.reset()
-            self.left_motor_b_PID.reset()
-            self.right_motor_b_PID.reset()
-
-            while abs(x_pos - _target_x) > _pidDistanceThreshold or abs(y_pos - _target_y) > _pidDistanceThreshold:
-                x_pos, y_pos = self.get_position()
-
-                # Speed towards target will be controlled by PID loop
-                error_x = _target_x - x_pos
-                error_y = _target_y - y_pos
-
-                # Prevent divide by 0 error
-                theta_to_target = 0
-                if error_x != 0:
-                    theta_to_target = math.atan(error_y / (error_x))
-                    
-                    # If theta_to_target is less than 0, then add 180 degrees
-                    theta_to_target += math.pi * (error_x < 0)
-
-                # output_x = x_magnitude_PID.update(error_x, self.delta_time)
-                # output_y = y_magnitude_PID.update(error_y, self.delta_time)
-
-                # output_magnitude = magnitude_PID.update(
-                    # (error_x ** 2 + error_y ** 2) ** (0.5), self.delta_time)
-
-                # self.drive(output_magnitude * cos(theta_to_target),
-                        #    output_magnitude * sin(theta_to_target), 0, square_input=False)
-
-                # Gonne be sleeping based off of self.delta time so that this loop doesn't update more frequently then delta_time (to make sure the PID loop's I error term doesn't explode quickly)
-                wait(self.delta_time, SECONDS)
-
-            
-            print("Exiting PID loop...")
-
     def run_autonomous(self, procedure):
         '''
         Given an autonomous procedure, this function will run the procedure
@@ -1336,6 +1315,12 @@ class Robot:
                 self.x_pos = step["setX"]
             if "setY" in step:
                 self.y_pos = step["setY"]
+            
+            for key in step.keys():
+                if key in self.state.keys():
+                    print("setting key of", key, "to", step[key])
+                    target_state[key] = step[key]
+
             # if "actions" in step.keys():
             #     if "unload" in step["actions"]:
             #         r.unload()
@@ -1356,9 +1341,14 @@ class Robot:
             
             self.set_target_state(target_state)
 
+            if "wait" in step.keys():
+                wait(step["wait"], SECONDS)
+
             while not self.target_reached:
                 self.update()
                 wait(0.1, SECONDS)
+
+        self.set_target_state(self.initial_state)
 
     def turn_to_heading(self, _heading, _wait=True):
         '''
@@ -1543,19 +1533,14 @@ class Robot:
 
         # Use a PID loop or just basic controls to have the robot turn towards the object here
 
-
 ##### FLYWHEEL ### FLYWHEEL ### FLYWHEEL ### FLYWHEEL ### FLYWHEEL ### FLYWHEEL ### FLYWHEEL ### FLYWHEEL ###
-    def set_flywheel_speed(self, speed):
-        self.flywheel_speed = speed
-        
-    
     def flywheel_update(self):
         self.flywheel_pid(self.flywheel_speed)        
     
     def flywheel_pid(self, speed):
         # TODO: Smoothing the output: The output of the PID controller may be noisy, which can cause instability in the system. To smooth the output, you can try using a low-pass filter to remove high-frequency noise.
         # TODO: Adding an anti-windup mechanism: An anti-windup mechanism can prevent the integral term from growing too large, which can cause the controller to lose control. This can be especially important if the system has a large dead-zone or if the output is saturated for long periods of time.
-        
+
         # MAX_FLYWHEEL_SPEED = 100 / 60
         MAX_VOLTAGE = 10 # I don't think this is the true maximum voltage btw
         
@@ -1588,15 +1573,15 @@ class Robot:
             self.flywheel_motor_1_average_output = 0
             self.flywheel_motor_2_average_output = 0
 
-        kP = 0.015
+        kP = 0.01
         kD = 0.15
 
         proportional_term_flywheel_1 = kP * (self.flywheel_speed - self.flywheel_1_avg_speed)
         derivative_term_flywheel_1 = kD * (self.flywheel_1_avg_speed - self.previous_flywheel_1_avg_speed)
         # error_helper_term_flywheel_1 = 0.01 * ((self.flywheel_speed - self.flywheel_1_avg_speed) - self.previous_flywheel_1_error) 
 
-        derivative_term_flywheel_1 = max(derivative_term_flywheel_1, -1)
-        derivative_term_flywheel_1 = min(derivative_term_flywheel_1, 1)
+        derivative_term_flywheel_1 = max(derivative_term_flywheel_1, -0.3)
+        derivative_term_flywheel_1 = min(derivative_term_flywheel_1, 0.3)
 
         # derivative_term_flywheel_1 = 0
 
@@ -1604,8 +1589,8 @@ class Robot:
         derivative_term_flywheel_2 = kD * (self.flywheel_2_avg_speed - self.previous_flywheel_2_avg_speed)
         # error_helper_term_flywheel_2 = 0.01 * ((self.flywheel_speed - self.flywheel_1_avg_speed) - self.previous_flywheel_1_error) 
 
-        derivative_term_flywheel_2 = max(derivative_term_flywheel_2, -1)
-        derivative_term_flywheel_2 = min(derivative_term_flywheel_2, 1)
+        derivative_term_flywheel_2 = max(derivative_term_flywheel_2, -0.3)
+        derivative_term_flywheel_2 = min(derivative_term_flywheel_2, 0.3)
 
         # derivative_term_flywheel_2 = 0
 
@@ -1677,119 +1662,7 @@ class Robot:
         # math.cos(theta_flywheel * DEG_TO_RAD)
 
         # distance_to_goal * theta_flywheel
-        pass
-
-##### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ### DRIVE ###
-    def drive(self, x_vector, y_vector, r_vector, constant_acceleration=True, square_input=True):
-        '''
-        Drives the robot.
-        params - 
-            x_vector - the speed that the robot will move in the x direction
-            y_vector - the speed that the robot will move in the y direction
-            r_vector - the speed that the robot will rotate
-            field_based_driving - if true, the robot will drive in the same direction regarless of the robot's orientation
-            constant_acceleration - if true, the robot will accelerate at a constant rate
-            square_input - if true, the robot will square the input to make it easier to control
-        '''
-        left_motor_a.spin(FORWARD)
-        left_motor_b.spin(FORWARD)
-        right_motor_a.spin(FORWARD)
-        right_motor_b.spin(FORWARD)
-
-        # Cool driving toggle (basically you rotate the target direction vector based on)
-        # the robots heading (https://stackoverflow.com/questions/14607640/rotating-a-vector-in-3d-space)
-        if self.drone_mode:
-            x_vector, y_vector = rotate_vector_2d(x_vector, y_vector, self.theta * DEG_TO_RAD)
-
-        # Square the input vectors and divide by 100 for better controls
-        if square_input:
-            x_vector = (x_vector ** 2) / 100 * sign(x_vector)
-            y_vector = (y_vector ** 2) / 100 * sign(y_vector)
-            r_vector = (r_vector ** 2) / 100 * sign(r_vector)
-
-        if self.slow_mode:
-            x_vector = x_vector / 4
-            y_vector = y_vector / 4
-            r_vector = r_vector / 4
-
-        # Get the motor powers
-        left_motor_a_target_velocity = x_vector + y_vector + r_vector
-        right_motor_a_target_velocity = -x_vector + y_vector - r_vector
-        left_motor_b_target_velocity = -x_vector + y_vector + r_vector
-        right_motor_b_target_velocity = x_vector + y_vector - r_vector
-
-        # Constant-ish acceleration profile. Basically, our acceleration is constant except for when we are close to starting or stopping (to prevent jerks/slides)
-        if constant_acceleration:
-
-            slow_down_speed_threshold = 5
-
-            max_acceleration_left_motor_a = self.max_acceleration
-            max_acceleration_right_motor_a = self.max_acceleration
-            max_acceleration_left_motor_b = self.max_acceleration
-            max_acceleration_right_motor_b = self.max_acceleration
-
-            # If we aren't moving from a stop to a start or vice versa, decrease acceleration
-            if abs(left_motor_a.velocity(PERCENT)) < slow_down_speed_threshold:
-                max_acceleration_left_motor_a = self.max_acceleration * 2
-
-            if abs(right_motor_a.velocity(PERCENT)) < slow_down_speed_threshold:
-                max_acceleration_right_motor_a = self.max_acceleration * 2
-
-            if abs(left_motor_b.velocity(PERCENT)) < slow_down_speed_threshold:
-                max_acceleration_left_motor_b = self.max_acceleration * 2
-
-            if abs(right_motor_b.velocity(PERCENT)) < slow_down_speed_threshold:
-                max_acceleration_right_motor_b = self.max_acceleration * 2
-
-            # Okie doki, this line is gonna need some documentation, but first some labels:
-            # (self.max_acceleration / self.max_velocity * 100) means the maximum acceleration of our robot IN A PERCENTAGE (i.e. 10 percent per second, 50 percent per second, -10 percent, per second)
-            # (self.max_acceleration / self.max_velocity * 100) * self.delta_time is the maximum change in velocity of the robot FOR THIS RUN THROUGH THE LOOP (by multipling by delta time we get how long its been since the last loop, which means we can change our velocity by that change in time time acceleration), Ex. if its been 0.1 seconds since the last loop, then our change in velocity can be 10 percent, but if it was 1 second then our change in velocity can be 100 percent beceause its been such a long time (if you still don't understand then learn what integration is)
-            # the goal of the following lines is to clamp the change in velocity to not go over some number (max_acceleration),
-            # so in order to do that we clamp motor_target_velocity between the motor_current_velocity plus the maximum change in velocity for this run of the loop, repeat for each wheel
-            left_motor_a_target_velocity = clamp(left_motor_a_target_velocity, (max_acceleration_left_motor_a / self.max_velocity * 100) * self.delta_time + left_motor_a.velocity(
-                PERCENT), -(max_acceleration_left_motor_a / self.max_velocity * 100) * self.delta_time + left_motor_a.velocity(PERCENT))
-            right_motor_a_target_velocity = clamp(right_motor_a_target_velocity, (max_acceleration_right_motor_a / self.max_velocity * 100) * self.delta_time + right_motor_a.velocity(
-                PERCENT), -(max_acceleration_right_motor_a / self.max_velocity * 100) * self.delta_time + right_motor_a.velocity(PERCENT))
-            left_motor_b_target_velocity = clamp(left_motor_b_target_velocity, (max_acceleration_left_motor_b / self.max_velocity * 100) * self.delta_time + left_motor_b.velocity(
-                PERCENT), -(max_acceleration_left_motor_b / self.max_velocity * 100) * self.delta_time + left_motor_b.velocity(PERCENT))
-            right_motor_b_target_velocity = clamp(right_motor_b_target_velocity, (max_acceleration_right_motor_b / self.max_velocity * 100) * self.delta_time + right_motor_b.velocity(
-                PERCENT), -(max_acceleration_right_motor_b / self.max_velocity * 100) * self.delta_time + right_motor_b.velocity(PERCENT))
-
-            # Accelerate the motors to the target velocity. 
-            left_motor_a.set_velocity(left_motor_a_target_velocity, PERCENT)
-            right_motor_a.set_velocity(right_motor_a_target_velocity, PERCENT)
-            left_motor_b.set_velocity(left_motor_b_target_velocity, PERCENT)
-            right_motor_b.set_velocity(right_motor_b_target_velocity, PERCENT)
-
-        else:
-            # Alpha controls how responsigve the driving is, higher alpha means more reponsibe
-            alpha = 0.4
-
-            if abs(x_vector) < 3 and abs(y_vector) < 3 and abs(r_vector) < 3:
-                alpha = 0.8
-
-            left_motor_a_target_velocity = left_motor_a.velocity(
-                PERCENT) * (1 - alpha) + left_motor_a_target_velocity * alpha
-            right_motor_a_target_velocity = right_motor_a.velocity(
-                PERCENT) * (1 - alpha) + right_motor_a_target_velocity * alpha
-            left_motor_b_target_velocity = left_motor_b.velocity(
-                PERCENT) * (1 - alpha) + left_motor_b_target_velocity * alpha
-            right_motor_b_target_velocity = right_motor_b.velocity(
-                PERCENT) * (1 - alpha) + right_motor_b_target_velocity * alpha
-
-        # Display content
-        # print("left_motor_a_target_velocity ", left_motor_a_target_velocity)
-        # print("right_motor_a_target_velocity ", right_motor_a_target_velocity)
-        # print("left_motor_b_target_velocity ", left_motor_b_target_velocity)
-        # print("right_motor_b_target_velocity ", right_motor_b_target_velocity)
-        # print("")
-
-        # Set motor powers
-        left_motor_a.set_velocity(left_motor_a_target_velocity, PERCENT)
-        right_motor_a.set_velocity(right_motor_a_target_velocity, PERCENT)
-        left_motor_b.set_velocity(left_motor_b_target_velocity, PERCENT)
-        right_motor_b.set_velocity(right_motor_b_target_velocity, PERCENT)
-    
+        pass    
 
 class RobotDoctor:
   r = Robot()
@@ -1948,7 +1821,7 @@ wait(30, MSEC)
 
 ######## COMPETITION FUNCTIONS ### COMPETITION FUNCTIONS ### COMPETITION FUNCTIONS ### COMPETITION FUNCTIONS ###
 def autonomous():
-    r.run_autonomous(mostyn)
+    r.run_autonomous(auto_test)
     r.stop_moving()
 
 def driver_control():
@@ -1978,8 +1851,16 @@ def driver_control():
         "buttonB" : controller_1.buttonB.pressing(),
     }
 
+    r.auto_intake = True
+    r.auto_roller = False
+
+    gui.render()
     while True:
+
+        gui.update()
+        gui.render()
         # Update the robot's information
+
 
         new_theta = controller_1.axis1.position() * 0.5
         # if controller_1.axis1.position() == 0:
@@ -1987,35 +1868,16 @@ def driver_control():
 
         new_x = (controller_1.axis4.position()) 
         new_y = (controller_1.axis3.position())
-        r.intake_speed = controller_1.buttonL1.pressing() * 100 - controller_1.buttonR1.pressing() * 100
         r.set_target_state(
             {
                 "override_velocity_x" : new_x,
                 "override_velocity_y" : new_y,
                 "theta" : r.theta + new_theta,
                 "slow_mode" : controller_1.buttonL1.pressing(),
+                "auto_intake": False,
+                "intake_speed" : controller_1.buttonL1.pressing() * 100 - controller_1.buttonR1.pressing() * 100,
             }
         )
-        # if controller_1.buttonY.pressing():
-        #     r.set_target_state({
-        #         "theta" : get_heading_to_object(r, r.goal)
-        #     })
-
-        # Timer to print things out to the terminal every x seconds
-        if (timer.time() > 0.1 * 1000):
-            print(r.flywheel_speed, flywheel_motor_1.velocity(PERCENT),flywheel_motor_2.velocity(PERCENT), r.flywheel_motor_1_error, r.flywheel_motor_2_error)
-            # print(r.state["override_velocity_x"], r.state["override_velocity_y"], r.state["theta"])
-            # print(r.x_pos, r.y_pos, r.theta, r.target_state["theta"])
-            timer.reset()
-
-
-        # When the buttons are pressed increment flywheel speed
-        if controller_1.buttonR2.pressing() and not previous_controller_states["buttonR2"]:
-            r.set_flywheel_speed(r.flywheel_speed + 5)
-            r.flywheel_speed = min(r.flywheel_speed, 100)
-        elif controller_1.buttonL2.pressing() and not previous_controller_states["buttonL2"]:
-            r.set_flywheel_speed(r.flywheel_speed - 5)
-            r.flywheel_speed = max(r.flywheel_speed, 0)
 
         if controller_1.buttonA.pressing():
             r.set_target_state({
@@ -2026,6 +1888,7 @@ def driver_control():
             r.set_target_state({
                 "theta" : -90,
             })
+
         # If only the x button is being pressed then rotate the robot to 0 deg, 
         # if the x and a button is pressed, rotate to 45, if a and y pressed
         # rotate to -45 deg
@@ -2059,22 +1922,49 @@ def driver_control():
                 r.set_target_state({
                     "theta" : 180,
                 })
-        
+        # Timer to print things out to the terminal every x seconds
+        if (timer.time() > 0.1 * 1000):
+            # print(r.flywheel_speed, flywheel_motor_1.velocity(PERCENT),flywheel_motor_2.velocity(PERCENT), r.flywheel_motor_1_error, r.flywheel_motor_2_error)
+            # print(r.state["override_velocity_x"], r.state["override_velocity_y"], r.state["theta"])
+            # print(r.x_pos, r.y_pos, r.theta, r.target_state["theta"])
 
-        
-        
-        # If someone has pressed button x for more than 1 second, reset the orientaiton
-        # if reset_theta_timer.value() > 1:
-        #     print("Resetting the orientation of the robot!!")
-        #     r.reset_theta()
-        #     controller_1.rumble("...")
-        #     reset_theta_timer.reset()
+            # Print the flywheel torque
+            print("flywheel_motor_torque", flywheel_motor_1.torque(PERCENT), flywheel_motor_2.torque(PERCENT), "intake", roller_and_intake_motor_1.torque(PERCENT), roller_and_intake_motor_2.torque(PERCENT))
+            controller_1.screen.clear_row(3)
+            controller_1.screen.print(f("FLY:", r.flywheel_speed, "ang:", round(r.theta)))
+            
+            timer.reset()
 
-        # if controller_1.buttonB.pressing():
-        #     r.print_debug_info()
+        if controller_1.buttonUp.pressing():
+            r.set_target_state({
+                "launch_expansion" : True
+            })
+        elif controller_1.buttonDown.pressing():
+            expansion.close()
+        
+        if controller_1.buttonLeft.pressing() or controller_1.buttonRight.pressing():
+            r.shoot_disk()
 
-        # if controller_1.buttonY.pressing():
-        #     expansion.open()
+        # When the buttons are pressed to change the level of the flywheel speed, r2 decreases level, l2 increases level
+        if controller_1.buttonR2.pressing() and not previous_controller_states["buttonR2"]:
+            temp_copy = r.flywheel_speed_levels.copy()
+            temp_copy.append(r.flywheel_speed)
+            temp_copy.sort()
+            new_flywheel_speed = temp_copy[min(temp_copy.index(r.flywheel_speed)+1,len(temp_copy)-1)]
+            r.set_target_state({
+                # "flywheel_speed" : min(r.flywheel_speed + 2, 100)
+                "flywheel_speed" : new_flywheel_speed
+            })
+
+        elif controller_1.buttonL2.pressing() and not previous_controller_states["buttonL2"]:
+            temp_copy = r.flywheel_speed_levels.copy()
+            temp_copy.append(r.flywheel_speed)
+            temp_copy.sort()
+            new_flywheel_speed = temp_copy[max(temp_copy.index(r.flywheel_speed)-1,0)]
+            r.set_target_state({                
+                # "flywheel_speed": max(r.flywheel_speed - 2, 0)
+                "flywheel_speed": new_flywheel_speed
+            })
 
         # Update previous controller states so we can track what the controller did before, we use this so that we can see if a button was pressed, not held, etc.
         previous_controller_states = {
@@ -2091,6 +1981,8 @@ def driver_control():
             "buttonA" : controller_1.buttonA.pressing(),
             "buttonB" : controller_1.buttonB.pressing(),
         }
+
+
         wait(0.01, SECONDS)
 
 
@@ -2098,13 +1990,21 @@ def driver_control():
 # simple_path = [{ 'x' : 0.0, 'y' : 0.0},{ 'x' : 0.0, 'y' : 1.254751286449391},{ 'x' : 0.0, 'y' : 3.1368782161234776},{ 'x' : 0.0, 'y' : 5.64638078902226},{ 'x' : 0.0, 'y' : 8.783259005145766},{ 'x' : 0.0, 'y' : 11.292761578044576},{ 'x' : -0.6273756432246955, 'y' : 15.057015437392778},{ 'x' : -0.6273756432246955, 'y' : 18.82126929674098},{ 'x' : -0.6273756432246955, 'y' : 23.212898799313876},{ 'x' : 0.0, 'y' : 26.977152658662078},{ 'x' : 0.0, 'y' : 28.23190394511147},{ 'x' : 0.0, 'y' : 31.99615780445967},{ 'x' : 0.0, 'y' : 35.76041166380787},{ 'x' : 0.0, 'y' : 40.15204116638077},{ 'x' : 0.0, 'y' : 44.543670668953666},{ 'x' : 0.627375643224724, 'y' : 47.05317324185248},{ 'x' : 0.627375643224724, 'y' : 50.81742710120065},{ 'x' : 1.2547512864494195, 'y' : 55.20905660377355},{ 'x' : 1.2547512864494195, 'y' : 58.97331046312175},{ 'x' : 1.2547512864494195, 'y' : 62.110188679245255},{ 'x' : 1.2547512864494195, 'y' : 66.50181818181815},{ 'x' : 1.882126929674115, 'y' : 70.26607204116635},{ 'x' : 1.882126929674115, 'y' : 74.65770154373925},{ 'x' : 1.882126929674115, 'y' : 78.42195540308745},{ 'x' : 1.882126929674115, 'y' : 82.18620926243565},{ 'x' : 2.5095025728988105, 'y' : 85.32308747855916},{ 'x' : 2.5095025728988105, 'y' : 89.08734133790736},{ 'x' : 3.7642538593482016, 'y' : 92.85159519725556},{ 'x' : 4.391629502572897, 'y' : 95.98847341337904},{ 'x' : 5.019005145797621, 'y' : 99.12535162950255},{ 'x' : 5.6463807890223165, 'y' : 101.63485420240136},{ 'x' : 6.273756432247012, 'y' : 104.14435677530014},{ 'x' : 6.901132075471708, 'y' : 107.28123499142364},{ 'x' : 8.155883361921099, 'y' : 109.16336192109776},{ 'x' : 10.038010291595214, 'y' : 111.04548885077185},{ 'x' : 11.292761578044605, 'y' : 112.92761578044596},{ 'x' : 12.547512864493996, 'y' : 114.18236706689535},{ 'x' : 14.42963979416811, 'y' : 116.06449399656944},{ 'x' : 16.311766723842197, 'y' : 117.31924528301886},{ 'x' : 18.193893653516312, 'y' : 117.94662092624355},{ 'x' : 20.0760205831904, 'y' : 119.20137221269295},{ 'x' : 21.33077186963982, 'y' : 119.20137221269295},{ 'x' : 23.8402744425386, 'y' : 119.82874785591764},{ 'x' : 25.722401372212715, 'y' : 119.82874785591764},{ 'x' : 27.604528301886802, 'y' : 119.82874785591764},{ 'x' : 29.486655231560917, 'y' : 119.82874785591764},{ 'x' : 31.368782161235004, 'y' : 119.82874785591764},{ 'x' : 33.25090909090909, 'y' : 119.20137221269295},{ 'x' : 34.50566037735851, 'y' : 118.57399656946825},{ 'x' : 35.7604116638079, 'y' : 117.94662092624355},{ 'x' : 37.01516295025729, 'y' : 117.31924528301886},{ 'x' : 38.89728987993141, 'y' : 116.06449399656944},{ 'x' : 39.5246655231561, 'y' : 114.18236706689535},{ 'x' : 40.1520411663808, 'y' : 112.30024013722124},{ 'x' : 41.40679245283019, 'y' : 109.79073756432246},{ 'x' : 42.03416809605491, 'y' : 107.28123499142364},{ 'x' : 42.66154373927961, 'y' : 104.77173241852486},{ 'x' : 43.288919382504304, 'y' : 101.63485420240136},{ 'x' : 43.916295025729, 'y' : 99.12535162950255},{ 'x' : 44.543670668953695, 'y' : 95.98847341337904},{ 'x' : 45.17104631217839, 'y' : 91.59684391080614},{ 'x' : 45.17104631217839, 'y' : 88.45996569468267},{ 'x' : 45.17104631217839, 'y' : 85.32308747855916},{ 'x' : 45.17104631217839, 'y' : 81.55883361921096},{ 'x' : 45.17104631217839, 'y' : 78.42195540308745},{ 'x' : 45.17104631217839, 'y' : 73.40295025728986},{ 'x' : 44.543670668953695, 'y' : 70.26607204116635},{ 'x' : 44.543670668953695, 'y' : 66.50181818181815},{ 'x' : 44.543670668953695, 'y' : 63.99231560891937},{ 'x' : 44.543670668953695, 'y' : 60.855437392795864},{ 'x' : 43.916295025729, 'y' : 58.34593481989705},{ 'x' : 43.916295025729, 'y' : 54.58168096054885},{ 'x' : 43.916295025729, 'y' : 52.07217838765007},{ 'x' : 43.288919382504304, 'y' : 49.56267581475126},{ 'x' : 43.916295025729, 'y' : 47.05317324185248},{ 'x' : 43.916295025729, 'y' : 45.17104631217836},{ 'x' : 43.916295025729, 'y' : 43.288919382504275},{ 'x' : 43.288919382504304, 'y' : 41.40679245283016},{ 'x' : 43.288919382504304, 'y' : 38.89728987993138},{ 'x' : 43.288919382504304, 'y' : 37.01516295025726},{ 'x' : 43.288919382504304, 'y' : 34.50566037735845},{ 'x' : 43.288919382504304, 'y' : 32.623533447684366},{ 'x' : 42.66154373927961, 'y' : 30.74140651801028},{ 'x' : 42.66154373927961, 'y' : 29.48665523156086},{ 'x' : 43.288919382504304, 'y' : 26.977152658662078},{ 'x' : 43.288919382504304, 'y' : 25.72240137221266},{ 'x' : 43.288919382504304, 'y' : 23.840274442538572},{ 'x' : 43.288919382504304, 'y' : 22.58552315608918},{ 'x' : 43.288919382504304, 'y' : 21.33077186963976},{ 'x' : 43.288919382504304, 'y' : 20.07602058319037},{ 'x' : 43.288919382504304, 'y' : 18.82126929674098},{ 'x' : 43.288919382504304, 'y' : 17.56651801029156},{ 'x' : 43.288919382504304, 'y' : 15.057015437392778},{ 'x' : 43.916295025729, 'y' : 13.174888507718663},{ 'x' : 43.916295025729, 'y' : 11.920137221269272},{ 'x' : 44.543670668953695, 'y' : 10.66538593481988},{ 'x' : 45.17104631217839, 'y' : 9.410634648370461},{ 'x' : 46.42579759862781, 'y' : 7.528507718696375},{ 'x' : 48.307924528301896, 'y' : 6.901132075471679},{ 'x' : 49.56267581475129, 'y' : 6.273756432246984},{ 'x' : 51.4448027444254, 'y' : 5.64638078902226},{ 'x' : 53.954305317324184, 'y' : 5.019005145797564},{ 'x' : 55.209056603773604, 'y' : 5.019005145797564},{ 'x' : 57.09118353344769, 'y' : 5.019005145797564},{ 'x' : 58.973310463121805, 'y' : 5.64638078902226},{ 'x' : 60.2280617495712, 'y' : 5.64638078902226},{ 'x' : 62.73756432247001, 'y' : 6.901132075471679},{ 'x' : 63.9923156089194, 'y' : 8.15588336192107},{ 'x' : 65.87444253859348, 'y' : 9.410634648370461},{ 'x' : 68.3839451114923, 'y' : 11.920137221269272},{ 'x' : 69.63869639794169, 'y' : 14.429639794168082},{ 'x' : 70.8934476843911, 'y' : 16.939142367066864},{ 'x' : 72.1481989708405, 'y' : 20.07602058319037},{ 'x' : 73.40295025728989, 'y' : 23.212898799313876},{ 'x' : 74.03032590051458, 'y' : 26.349777015437354},{ 'x' : 74.65770154373931, 'y' : 30.114030874785556},{ 'x' : 75.285077186964, 'y' : 33.87828473413376},{ 'x' : 75.9124528301887, 'y' : 38.269914236706654},{ 'x' : 76.5398284734134, 'y' : 41.40679245283016},{ 'x' : 77.16720411663809, 'y' : 45.79842195540306},{ 'x' : 77.16720411663809, 'y' : 49.56267581475126},{ 'x' : 77.79457975986278, 'y' : 53.954305317324156},{ 'x' : 78.42195540308748, 'y' : 57.71855917667236},{ 'x' : 78.42195540308748, 'y' : 60.855437392795864},{ 'x' : 79.0493310463122, 'y' : 64.61969125214407},{ 'x' : 79.0493310463122, 'y' : 67.75656946826757},{ 'x' : 79.0493310463122, 'y' : 70.26607204116635},{ 'x' : 79.0493310463122, 'y' : 72.77557461406516},{ 'x' : 78.42195540308748, 'y' : 75.91245283018867},{ 'x' : 78.42195540308748, 'y' : 79.04933104631215},{ 'x' : 78.42195540308748, 'y' : 81.55883361921096},{ 'x' : 77.79457975986278, 'y' : 84.06833619210974},{ 'x' : 77.79457975986278, 'y' : 86.57783876500855},{ 'x' : 78.42195540308748, 'y' : 89.08734133790736},{ 'x' : 78.42195540308748, 'y' : 90.34209262435675},{ 'x' : 78.42195540308748, 'y' : 92.85159519725556},{ 'x' : 79.0493310463122, 'y' : 95.36109777015434},{ 'x' : 79.0493310463122, 'y' : 97.87060034305316},{ 'x' : 79.0493310463122, 'y' : 99.75272727272724},{ 'x' : 79.0493310463122, 'y' : 101.63485420240136},{ 'x' : 79.6767066895369, 'y' : 102.88960548885075},{ 'x' : 79.6767066895369, 'y' : 105.39910806174956},{ 'x' : 79.6767066895369, 'y' : 107.28123499142364},{ 'x' : 79.6767066895369, 'y' : 109.16336192109776},{ 'x' : 80.3040823327616, 'y' : 111.04548885077185},{ 'x' : 80.3040823327616, 'y' : 112.30024013722124},{ 'x' : 80.93145797598629, 'y' : 114.18236706689535},{ 'x' : 81.55883361921099, 'y' : 116.06449399656944},{ 'x' : 82.18620926243568, 'y' : 117.31924528301886},{ 'x' : 83.4409605488851, 'y' : 118.57399656946825},{ 'x' : 84.69571183533449, 'y' : 119.82874785591764},{ 'x' : 86.57783876500858, 'y' : 120.45612349914234},{ 'x' : 88.4599656946827, 'y' : 121.08349914236703},{ 'x' : 90.34209262435678, 'y' : 121.08349914236703},{ 'x' : 92.85159519725559, 'y' : 121.71087478559176},{ 'x' : 95.3610977701544, 'y' : 121.71087478559176},{ 'x' : 99.12535162950257, 'y' : 121.08349914236703},{ 'x' : 101.63485420240139, 'y' : 120.45612349914234},{ 'x' : 104.1443567753002, 'y' : 120.45612349914234},{ 'x' : 107.28123499142367, 'y' : 119.20137221269295},{ 'x' : 109.79073756432248, 'y' : 118.57399656946825},{ 'x' : 112.3002401372213, 'y' : 117.31924528301886},{ 'x' : 114.18236706689538, 'y' : 116.06449399656944},{ 'x' : 115.43711835334477, 'y' : 114.80974271012005},{ 'x' : 116.69186963979419, 'y' : 113.55499142367066},{ 'x' : 119.20137221269297, 'y' : 110.41811320754715},{ 'x' : 120.4561234991424, 'y' : 107.90861063464834},{ 'x' : 121.08349914236709, 'y' : 105.39910806174956},{ 'x' : 121.08349914236709, 'y' : 102.26222984562605},{ 'x' : 121.71087478559178, 'y' : 98.49797598627785},{ 'x' : 121.71087478559178, 'y' : 96.61584905660376},{ 'x' : 122.33825042881648, 'y' : 92.22421955403084},{ 'x' : 122.33825042881648, 'y' : 88.45996569468267},{ 'x' : 121.71087478559178, 'y' : 85.32308747855916},{ 'x' : 121.71087478559178, 'y' : 81.55883361921096},{ 'x' : 121.71087478559178, 'y' : 78.42195540308745},{ 'x' : 121.08349914236709, 'y' : 73.40295025728986},{ 'x' : 121.08349914236709, 'y' : 69.63869639794166},{ 'x' : 121.08349914236709, 'y' : 65.87444253859346},{ 'x' : 121.08349914236709, 'y' : 61.48281303602056},{ 'x' : 120.4561234991424, 'y' : 56.46380789022297},{ 'x' : 120.4561234991424, 'y' : 52.699554030874765},{ 'x' : 120.4561234991424, 'y' : 48.93530017152656},{ 'x' : 120.4561234991424, 'y' : 45.17104631217836},{ 'x' : 120.4561234991424, 'y' : 41.40679245283016},{ 'x' : 120.4561234991424, 'y' : 37.64253859348196},{ 'x' : 120.4561234991424, 'y' : 33.87828473413376},{ 'x' : 120.4561234991424, 'y' : 31.368782161234975},{ 'x' : 120.4561234991424, 'y' : 28.859279588336165},{ 'x' : 120.4561234991424, 'y' : 26.349777015437354},{ 'x' : 120.4561234991424, 'y' : 23.840274442538572},{ 'x' : 120.4561234991424, 'y' : 21.958147512864457},{ 'x' : 120.4561234991424, 'y' : 20.703396226415066},{ 'x' : 120.4561234991424, 'y' : 19.448644939965675},{ 'x' : 120.4561234991424, 'y' : 18.193893653516284},{ 'x' : 120.4561234991424, 'y' : 16.939142367066864},{ 'x' : 120.4561234991424, 'y' : 15.684391080617473},{ 'x' : 120.4561234991424, 'y' : 14.429639794168082},{ 'x' : 120.4561234991424, 'y' : 13.174888507718663},{ 'x' : 120.4561234991424, 'y' : 11.920137221269272},{ 'x' : 119.82874785591767, 'y' : 10.66538593481988},{ 'x' : 118.57399656946828, 'y' : 10.66538593481988},{ 'x' : 116.69186963979419, 'y' : 9.410634648370461},{ 'x' : 114.80974271012008, 'y' : 8.783259005145766},{ 'x' : 112.3002401372213, 'y' : 8.15588336192107},{ 'x' : 109.16336192109779, 'y' : 6.901132075471679},{ 'x' : 106.02648370497428, 'y' : 6.901132075471679},{ 'x' : 102.26222984562608, 'y' : 5.64638078902226},{ 'x' : 97.87060034305318, 'y' : 5.019005145797564},{ 'x' : 92.85159519725559, 'y' : 4.391629502572869},{ 'x' : 87.2052144082333, 'y' : 3.1368782161234776},{ 'x' : 82.18620926243568, 'y' : 3.1368782161234776},{ 'x' : 75.9124528301887, 'y' : 1.8821269296740866},{ 'x' : 70.26607204116638, 'y' : 1.254751286449391},{ 'x' : 64.6196912521441, 'y' : 1.254751286449391},{ 'x' : 58.34593481989711, 'y' : 0.6273756432246955},{ 'x' : 53.32692967409949, 'y' : 0.6273756432246955},{ 'x' : 48.307924528301896, 'y' : 0.6273756432246955},{ 'x' : 42.66154373927961, 'y' : 0.6273756432246955},{ 'x' : 37.01516295025729, 'y' : 0.6273756432246955},{ 'x' : 31.9961578044597, 'y' : 0.6273756432246955},{ 'x' : 29.486655231560917, 'y' : 0.6273756432246955},{ 'x' : 25.09502572898799, 'y' : 0.0},{ 'x' : 21.33077186963982, 'y' : 0.6273756432246955},{ 'x' : 16.939142367066893, 'y' : 0.6273756432246955},{ 'x' : 15.057015437392806, 'y' : 0.6273756432246955},{ 'x' : 11.9201372212693, 'y' : 0.6273756432246955},{ 'x' : 8.783259005145823, 'y' : 0.6273756432246955},{ 'x' : 5.6463807890223165, 'y' : 0.6273756432246955},{ 'x' : 3.136878216123506, 'y' : 0.0},{ 'x' : 1.882126929674115, 'y' : 0.0},]
 straight_line = [{ 'x' : 0.0, 'y' : 0.0},{ 'x' : -0.6273756432246955, 'y' : 8.155883361921099},{ 'x' : -0.6273756432246955, 'y' : 15.057015437392778},{ 'x' : -1.2547512864494053, 'y' : 25.09502572898799},{ 'x' : -1.8821269296741008, 'y' : 36.38778730703257},{ 'x' : -3.136878216123506, 'y' : 46.42579759862778},{ 'x' : -3.136878216123506, 'y' : 55.209056603773575},{ 'x' : -3.7642538593482016, 'y' : 62.73756432246998},{ 'x' : -3.7642538593482016, 'y' : 69.01132075471696},{ 'x' : -3.136878216123506, 'y' : 73.40295025728986},]
 mostyn = [{ 'x' : 0.0, 'y' : 0.0},{ 'x' : -0.63, 'y' : 4.39},{ 'x' : 0.0, 'y' : 10.04},{ 'x' : 0.0, 'y' : 13.8},{ 'x' : 0.0, 'y' : 20.08},{ 'x' : 0.63, 'y' : 32.0},{ 'x' : 1.25, 'y' : 42.66},{ 'x' : 1.88, 'y' : 53.95},{ 'x' : 1.88, 'y' : 63.36},{ 'x' : 1.88, 'y' : 72.78},{ 'x' : 1.88, 'y' : 80.3},{ 'x' : 1.25, 'y' : 87.21},{ 'x' : 0.63, 'y' : 93.48},{ 'x' : -0.63, 'y' : 99.13},{ 'x' : -1.88, 'y' : 104.77},{ 'x' : -2.51, 'y' : 110.42},{ 'x' : -3.76, 'y' : 116.06},{ 'x' : -4.39, 'y' : 122.34},{ 'x' : -5.02, 'y' : 127.98},{ 'x' : -5.02, 'y' : 134.26},{ 'x' : -5.02, 'y' : 140.53},{ 'x' : -4.39, 'y' : 146.18},{ 'x' : -4.39, 'y' : 151.2},{ 'x' : -3.76, 'y' : 156.84},{ 'x' : -3.14, 'y' : 161.24},{ 'x' : -3.14, 'y' : 162.49},{ 'x' : -3.14, 'y' : 163.75},{ 'x' : -3.14, 'y' : 165.0},{ 'x' : -3.14, 'y' : 166.25},{ 'x' : -3.14, 'y' : 167.51},{ 'x' : -3.14, 'y' : 168.76},{ 'x' : -1.25, 'y' : 170.02},{ 'x' : 0.63, 'y' : 171.27},{ 'x' : 3.76, 'y' : 171.9},{ 'x' : 6.9, 'y' : 173.16},{ 'x' : 11.29, 'y' : 173.78},{ 'x' : 16.31, 'y' : 175.04},{ 'x' : 21.33, 'y' : 176.29},{ 'x' : 26.98, 'y' : 176.92},{ 'x' : 32.62, 'y' : 178.17},{ 'x' : 42.66, 'y' : 178.8},{ 'x' : 50.19, 'y' : 180.06},{ 'x' : 60.23, 'y' : 180.06},{ 'x' : 63.99, 'y' : 180.06},{ 'x' : 72.15, 'y' : 180.06},{ 'x' : 79.68, 'y' : 178.8},{ 'x' : 85.95, 'y' : 176.92},{ 'x' : 92.85, 'y' : 174.41},{ 'x' : 98.5, 'y' : 171.27},{ 'x' : 101.01, 'y' : 169.39},{ 'x' : 106.03, 'y' : 165.63},{ 'x' : 111.05, 'y' : 161.24},{ 'x' : 115.44, 'y' : 156.84},{ 'x' : 119.83, 'y' : 151.82},{ 'x' : 124.22, 'y' : 146.81},{ 'x' : 127.98, 'y' : 141.79},{ 'x' : 131.12, 'y' : 136.77},{ 'x' : 134.26, 'y' : 131.12},{ 'x' : 136.77, 'y' : 125.48},{ 'x' : 139.28, 'y' : 119.83},{ 'x' : 141.79, 'y' : 114.18},{ 'x' : 143.67, 'y' : 108.54},{ 'x' : 145.55, 'y' : 102.26},{ 'x' : 146.81, 'y' : 95.99},{ 'x' : 147.43, 'y' : 90.34},{ 'x' : 147.43, 'y' : 82.81},{ 'x' : 146.81, 'y' : 75.91},{ 'x' : 146.18, 'y' : 67.76},{ 'x' : 143.67, 'y' : 59.6},{ 'x' : 139.9, 'y' : 51.44},{ 'x' : 135.51, 'y' : 42.66},{ 'x' : 131.12, 'y' : 34.51},{ 'x' : 126.1, 'y' : 26.98},{ 'x' : 120.46, 'y' : 20.08},{ 'x' : 114.81, 'y' : 13.8},{ 'x' : 109.16, 'y' : 8.78},{ 'x' : 106.65, 'y' : 6.27},{ 'x' : 100.38, 'y' : 1.88},{ 'x' : 94.11, 'y' : -1.25},{ 'x' : 88.46, 'y' : -3.76},{ 'x' : 82.19, 'y' : -5.65},{ 'x' : 75.29, 'y' : -6.27},{ 'x' : 72.15, 'y' : -6.9},{ 'x' : 65.25, 'y' : -6.27},{ 'x' : 58.97, 'y' : -5.65},{ 'x' : 52.07, 'y' : -4.39},{ 'x' : 45.8, 'y' : -3.76},{ 'x' : 39.52, 'y' : -1.88},{ 'x' : 33.25, 'y' : -0.63},{ 'x' : 26.98, 'y' : 0.63},{ 'x' : 21.33, 'y' : 2.51},{ 'x' : 16.31, 'y' : 4.39},{ 'x' : 11.29, 'y' : 5.65},{ 'x' : 6.9, 'y' : 6.27},]
-revamping_everthing = [{ 'x' : 0.0, 'y' : 0.0},{ 'x' : 0.0, 'y' : 1.88},{ 'x' : -0.63, 'y' : 3.14},{ 'x' : -0.63, 'y' : 4.39},{ 'x' : -0.63, 'y' : 6.27},{ 'x' : -1.25, 'y' : 7.53},{ 'x' : -1.25, 'y' : 10.67},{ 'x' : -1.88, 'y' : 13.8},{ 'x' : -1.88, 'y' : 22.59},{ 'x' : -1.88, 'y' : 28.23},{ 'x' : -2.51, 'y' : 35.76},{ 'x' : -2.51, 'y' : 41.41},{ 'x' : -3.14, 'y' : 47.05},{ 'x' : -2.51, 'y' : 52.07},{ 'x' : -1.88, 'y' : 56.46},{ 'x' : -1.25, 'y' : 60.86},{ 'x' : -0.63, 'y' : 64.62},{ 'x' : 0.0, 'y' : 69.01},{ 'x' : 0.63, 'y' : 72.78},{ 'x' : 0.63, 'y' : 77.79},{ 'x' : 1.88, 'y' : 80.93},{ 'x' : 2.51, 'y' : 82.81},{ 'x' : 3.76, 'y' : 85.32},{ 'x' : 5.65, 'y' : 87.21},{ 'x' : 7.53, 'y' : 90.34},{ 'x' : 9.41, 'y' : 91.6},{ 'x' : 10.67, 'y' : 93.48},{ 'x' : 11.92, 'y' : 94.11},{ 'x' : 13.8, 'y' : 94.73},{ 'x' : 15.06, 'y' : 95.36},{ 'x' : 16.31, 'y' : 95.99},{ 'x' : 17.57, 'y' : 95.99},{ 'x' : 18.82, 'y' : 95.99},{ 'x' : 20.08, 'y' : 95.99},{ 'x' : 21.33, 'y' : 95.36},{ 'x' : 22.59, 'y' : 94.73},{ 'x' : 24.47, 'y' : 94.11},{ 'x' : 25.72, 'y' : 92.85},{ 'x' : 27.6, 'y' : 90.97},{ 'x' : 27.6, 'y' : 89.71},{ 'x' : 28.86, 'y' : 88.46},{ 'x' : 29.49, 'y' : 86.58},{ 'x' : 30.11, 'y' : 84.7},{ 'x' : 30.11, 'y' : 82.19},{ 'x' : 30.74, 'y' : 80.93},{ 'x' : 31.37, 'y' : 78.42},{ 'x' : 31.37, 'y' : 75.29},{ 'x' : 32.0, 'y' : 72.78},{ 'x' : 32.62, 'y' : 69.64},{ 'x' : 32.62, 'y' : 65.87},{ 'x' : 32.62, 'y' : 62.11},{ 'x' : 32.62, 'y' : 57.72},{ 'x' : 32.62, 'y' : 52.7},{ 'x' : 33.25, 'y' : 49.56},{ 'x' : 33.25, 'y' : 47.68},{ 'x' : 33.25, 'y' : 43.92},{ 'x' : 33.25, 'y' : 40.15},{ 'x' : 33.88, 'y' : 34.51},{ 'x' : 33.88, 'y' : 30.74},{ 'x' : 33.88, 'y' : 26.98},{ 'x' : 33.88, 'y' : 24.47},{ 'x' : 33.88, 'y' : 20.7},{ 'x' : 33.88, 'y' : 16.31},{ 'x' : 34.51, 'y' : 12.55},{ 'x' : 34.51, 'y' : 10.04},{ 'x' : 35.13, 'y' : 7.53},{ 'x' : 35.76, 'y' : 5.65},{ 'x' : 36.39, 'y' : 3.76},{ 'x' : 37.64, 'y' : 2.51},{ 'x' : 38.9, 'y' : 0.0},{ 'x' : 39.52, 'y' : -1.88},{ 'x' : 40.78, 'y' : -2.51},{ 'x' : 42.66, 'y' : -3.76},{ 'x' : 44.54, 'y' : -5.02},{ 'x' : 47.05, 'y' : -6.27},{ 'x' : 48.94, 'y' : -6.9},{ 'x' : 53.33, 'y' : -5.65},{ 'x' : 57.09, 'y' : -5.02},{ 'x' : 58.35, 'y' : -3.76},{ 'x' : 59.6, 'y' : -2.51},{ 'x' : 60.86, 'y' : -1.25},{ 'x' : 62.74, 'y' : 1.88},{ 'x' : 63.99, 'y' : 3.76},{ 'x' : 65.25, 'y' : 6.9},{ 'x' : 65.87, 'y' : 10.67},{ 'x' : 67.13, 'y' : 14.43},{ 'x' : 67.13, 'y' : 16.31},{ 'x' : 68.38, 'y' : 20.08},{ 'x' : 68.38, 'y' : 25.1},{ 'x' : 69.01, 'y' : 29.49},{ 'x' : 69.64, 'y' : 34.51},{ 'x' : 70.27, 'y' : 39.52},{ 'x' : 70.89, 'y' : 45.8},{ 'x' : 70.89, 'y' : 48.94},{ 'x' : 71.52, 'y' : 54.58},{ 'x' : 73.4, 'y' : 65.25},{ 'x' : 73.4, 'y' : 73.4},{ 'x' : 74.66, 'y' : 82.81},{ 'x' : 74.66, 'y' : 90.34},{ 'x' : 75.91, 'y' : 97.24},{ 'x' : 76.54, 'y' : 102.26},{ 'x' : 77.17, 'y' : 107.28},{ 'x' : 77.79, 'y' : 108.54},{ 'x' : 78.42, 'y' : 107.28},{ 'x' : 80.3, 'y' : 106.65},{ 'x' : 82.19, 'y' : 106.03},{ 'x' : 84.07, 'y' : 106.65},{ 'x' : 86.58, 'y' : 106.65},{ 'x' : 89.09, 'y' : 106.03},{ 'x' : 91.6, 'y' : 106.03},{ 'x' : 94.11, 'y' : 105.4},{ 'x' : 95.36, 'y' : 105.4},{ 'x' : 97.87, 'y' : 104.77},{ 'x' : 100.38, 'y' : 104.14},{ 'x' : 102.26, 'y' : 103.52},{ 'x' : 104.14, 'y' : 102.26},{ 'x' : 106.03, 'y' : 101.01},{ 'x' : 107.28, 'y' : 100.38},{ 'x' : 109.16, 'y' : 98.5},{ 'x' : 110.42, 'y' : 96.62},{ 'x' : 111.67, 'y' : 94.11},{ 'x' : 112.3, 'y' : 92.85},{ 'x' : 112.93, 'y' : 90.97},{ 'x' : 113.55, 'y' : 89.09},{ 'x' : 114.18, 'y' : 87.83},{ 'x' : 114.18, 'y' : 85.95},{ 'x' : 114.81, 'y' : 84.7},{ 'x' : 115.44, 'y' : 82.19},{ 'x' : 115.44, 'y' : 80.93},{ 'x' : 115.44, 'y' : 79.68},{ 'x' : 115.44, 'y' : 76.54},{ 'x' : 115.44, 'y' : 74.03},{ 'x' : 115.44, 'y' : 70.89},{ 'x' : 115.44, 'y' : 67.13},{ 'x' : 114.81, 'y' : 63.36},{ 'x' : 114.81, 'y' : 58.97},{ 'x' : 114.18, 'y' : 55.21},{ 'x' : 113.55, 'y' : 51.44},{ 'x' : 113.55, 'y' : 48.31},{ 'x' : 113.55, 'y' : 45.8},{ 'x' : 113.55, 'y' : 44.54},{ 'x' : 112.93, 'y' : 40.78},{ 'x' : 112.93, 'y' : 38.9},{ 'x' : 112.93, 'y' : 36.39},{ 'x' : 112.93, 'y' : 34.51},{ 'x' : 112.93, 'y' : 32.62},{ 'x' : 112.93, 'y' : 30.74},{ 'x' : 112.93, 'y' : 28.86},{ 'x' : 112.3, 'y' : 26.98},{ 'x' : 112.93, 'y' : 25.1},{ 'x' : 112.93, 'y' : 23.21},{ 'x' : 112.93, 'y' : 21.96},{ 'x' : 113.55, 'y' : 20.08},{ 'x' : 113.55, 'y' : 18.82},{ 'x' : 113.55, 'y' : 17.57},{ 'x' : 113.55, 'y' : 16.31},{ 'x' : 113.55, 'y' : 15.06},{ 'x' : 114.18, 'y' : 13.8},{ 'x' : 114.18, 'y' : 12.55},{ 'x' : 114.18, 'y' : 11.29},{ 'x' : 114.18, 'y' : 10.04},{ 'x' : 114.18, 'y' : 8.78},{ 'x' : 114.18, 'y' : 7.53},{ 'x' : 113.55, 'y' : 6.27},{ 'x' : 113.55, 'y' : 5.02},{ 'x' : 111.67, 'y' : 3.76},{ 'x' : 107.28, 'y' : 2.51},{ 'x' : 104.77, 'y' : 1.88},{ 'x' : 97.24, 'y' : 0.63},{ 'x' : 92.85, 'y' : 0.63},{ 'x' : 89.71, 'y' : 0.63},{ 'x' : 80.93, 'y' : 0.63},{ 'x' : 78.42, 'y' : 0.63},{ 'x' : 69.01, 'y' : 0.63},{ 'x' : 60.86, 'y' : 0.63},{ 'x' : 53.95, 'y' : 1.88},{ 'x' : 46.43, 'y' : 2.51},{ 'x' : 40.15, 'y' : 3.76},{ 'x' : 33.88, 'y' : 5.02},{ 'x' : 27.6, 'y' : 5.65},{ 'x' : 21.33, 'y' : 6.27},{ 'x' : 15.68, 'y' : 6.27},{ 'x' : 9.41, 'y' : 6.9},{ 'x' : 3.76, 'y' : 6.27},{ 'x' : -1.88, 'y' : 5.65},{ 'x' : -5.65, 'y' : 5.65},{ 'x' : -9.41, 'y' : 5.02},]
+# revamping_everthing = [{ 'x' : 0.0, 'y' : 0.0},{ 'x' : 0.0, 'y' : 1.88},{ 'x' : -0.63, 'y' : 3.14},{ 'x' : -0.63, 'y' : 4.39},{ 'x' : -0.63, 'y' : 6.27},{ 'x' : -1.25, 'y' : 7.53},{ 'x' : -1.25, 'y' : 10.67},{ 'x' : -1.88, 'y' : 13.8},{ 'x' : -1.88, 'y' : 22.59},{ 'x' : -1.88, 'y' : 28.23},{ 'x' : -2.51, 'y' : 35.76},{ 'x' : -2.51, 'y' : 41.41},{ 'x' : -3.14, 'y' : 47.05},{ 'x' : -2.51, 'y' : 52.07},{ 'x' : -1.88, 'y' : 56.46},{ 'x' : -1.25, 'y' : 60.86},{ 'x' : -0.63, 'y' : 64.62},{ 'x' : 0.0, 'y' : 69.01},{ 'x' : 0.63, 'y' : 72.78},{ 'x' : 0.63, 'y' : 77.79},{ 'x' : 1.88, 'y' : 80.93},{ 'x' : 2.51, 'y' : 82.81},{ 'x' : 3.76, 'y' : 85.32},{ 'x' : 5.65, 'y' : 87.21},{ 'x' : 7.53, 'y' : 90.34},{ 'x' : 9.41, 'y' : 91.6},{ 'x' : 10.67, 'y' : 93.48},{ 'x' : 11.92, 'y' : 94.11},{ 'x' : 13.8, 'y' : 94.73},{ 'x' : 15.06, 'y' : 95.36},{ 'x' : 16.31, 'y' : 95.99},{ 'x' : 17.57, 'y' : 95.99},{ 'x' : 18.82, 'y' : 95.99},{ 'x' : 20.08, 'y' : 95.99},{ 'x' : 21.33, 'y' : 95.36},{ 'x' : 22.59, 'y' : 94.73},{ 'x' : 24.47, 'y' : 94.11},{ 'x' : 25.72, 'y' : 92.85},{ 'x' : 27.6, 'y' : 90.97},{ 'x' : 27.6, 'y' : 89.71},{ 'x' : 28.86, 'y' : 88.46},{ 'x' : 29.49, 'y' : 86.58},{ 'x' : 30.11, 'y' : 84.7},{ 'x' : 30.11, 'y' : 82.19},{ 'x' : 30.74, 'y' : 80.93},{ 'x' : 31.37, 'y' : 78.42},{ 'x' : 31.37, 'y' : 75.29},{ 'x' : 32.0, 'y' : 72.78},{ 'x' : 32.62, 'y' : 69.64},{ 'x' : 32.62, 'y' : 65.87},{ 'x' : 32.62, 'y' : 62.11},{ 'x' : 32.62, 'y' : 57.72},{ 'x' : 32.62, 'y' : 52.7},{ 'x' : 33.25, 'y' : 49.56},{ 'x' : 33.25, 'y' : 47.68},{ 'x' : 33.25, 'y' : 43.92},{ 'x' : 33.25, 'y' : 40.15},{ 'x' : 33.88, 'y' : 34.51},{ 'x' : 33.88, 'y' : 30.74},{ 'x' : 33.88, 'y' : 26.98},{ 'x' : 33.88, 'y' : 24.47},{ 'x' : 33.88, 'y' : 20.7},{ 'x' : 33.88, 'y' : 16.31},{ 'x' : 34.51, 'y' : 12.55},{ 'x' : 34.51, 'y' : 10.04},{ 'x' : 35.13, 'y' : 7.53},{ 'x' : 35.76, 'y' : 5.65},{ 'x' : 36.39, 'y' : 3.76},{ 'x' : 37.64, 'y' : 2.51},{ 'x' : 38.9, 'y' : 0.0},{ 'x' : 39.52, 'y' : -1.88},{ 'x' : 40.78, 'y' : -2.51},{ 'x' : 42.66, 'y' : -3.76},{ 'x' : 44.54, 'y' : -5.02},{ 'x' : 47.05, 'y' : -6.27},{ 'x' : 48.94, 'y' : -6.9},{ 'x' : 53.33, 'y' : -5.65},{ 'x' : 57.09, 'y' : -5.02},{ 'x' : 58.35, 'y' : -3.76},{ 'x' : 59.6, 'y' : -2.51},{ 'x' : 60.86, 'y' : -1.25},{ 'x' : 62.74, 'y' : 1.88},{ 'x' : 63.99, 'y' : 3.76},{ 'x' : 65.25, 'y' : 6.9},{ 'x' : 65.87, 'y' : 10.67},{ 'x' : 67.13, 'y' : 14.43},{ 'x' : 67.13, 'y' : 16.31},{ 'x' : 68.38, 'y' : 20.08},{ 'x' : 68.38, 'y' : 25.1},{ 'x' : 69.01, 'y' : 29.49},{ 'x' : 69.64, 'y' : 34.51},{ 'x' : 70.27, 'y' : 39.52},{ 'x' : 70.89, 'y' : 45.8},{ 'x' : 70.89, 'y' : 48.94},{ 'x' : 71.52, 'y' : 54.58},{ 'x' : 73.4, 'y' : 65.25},{ 'x' : 73.4, 'y' : 73.4},{ 'x' : 74.66, 'y' : 82.81},{ 'x' : 74.66, 'y' : 90.34},{ 'x' : 75.91, 'y' : 97.24},{ 'x' : 76.54, 'y' : 102.26},{ 'x' : 77.17, 'y' : 107.28},{ 'x' : 77.79, 'y' : 108.54},{ 'x' : 78.42, 'y' : 107.28},{ 'x' : 80.3, 'y' : 106.65},{ 'x' : 82.19, 'y' : 106.03},{ 'x' : 84.07, 'y' : 106.65},{ 'x' : 86.58, 'y' : 106.65},{ 'x' : 89.09, 'y' : 106.03},{ 'x' : 91.6, 'y' : 106.03},{ 'x' : 94.11, 'y' : 105.4},{ 'x' : 95.36, 'y' : 105.4},{ 'x' : 97.87, 'y' : 104.77},{ 'x' : 100.38, 'y' : 104.14},{ 'x' : 102.26, 'y' : 103.52},{ 'x' : 104.14, 'y' : 102.26},{ 'x' : 106.03, 'y' : 101.01},{ 'x' : 107.28, 'y' : 100.38},{ 'x' : 109.16, 'y' : 98.5},{ 'x' : 110.42, 'y' : 96.62},{ 'x' : 111.67, 'y' : 94.11},{ 'x' : 112.3, 'y' : 92.85},{ 'x' : 112.93, 'y' : 90.97},{ 'x' : 113.55, 'y' : 89.09},{ 'x' : 114.18, 'y' : 87.83},{ 'x' : 114.18, 'y' : 85.95},{ 'x' : 114.81, 'y' : 84.7},{ 'x' : 115.44, 'y' : 82.19},{ 'x' : 115.44, 'y' : 80.93},{ 'x' : 115.44, 'y' : 79.68},{ 'x' : 115.44, 'y' : 76.54},{ 'x' : 115.44, 'y' : 74.03},{ 'x' : 115.44, 'y' : 70.89},{ 'x' : 115.44, 'y' : 67.13},{ 'x' : 114.81, 'y' : 63.36},{ 'x' : 114.81, 'y' : 58.97},{ 'x' : 114.18, 'y' : 55.21},{ 'x' : 113.55, 'y' : 51.44},{ 'x' : 113.55, 'y' : 48.31},{ 'x' : 113.55, 'y' : 45.8},{ 'x' : 113.55, 'y' : 44.54},{ 'x' : 112.93, 'y' : 40.78},{ 'x' : 112.93, 'y' : 38.9},{ 'x' : 112.93, 'y' : 36.39},{ 'x' : 112.93, 'y' : 34.51},{ 'x' : 112.93, 'y' : 32.62},{ 'x' : 112.93, 'y' : 30.74},{ 'x' : 112.93, 'y' : 28.86},{ 'x' : 112.3, 'y' : 26.98},{ 'x' : 112.93, 'y' : 25.1},{ 'x' : 112.93, 'y' : 23.21},{ 'x' : 112.93, 'y' : 21.96},{ 'x' : 113.55, 'y' : 20.08},{ 'x' : 113.55, 'y' : 18.82},{ 'x' : 113.55, 'y' : 17.57},{ 'x' : 113.55, 'y' : 16.31},{ 'x' : 113.55, 'y' : 15.06},{ 'x' : 114.18, 'y' : 13.8},{ 'x' : 114.18, 'y' : 12.55},{ 'x' : 114.18, 'y' : 11.29},{ 'x' : 114.18, 'y' : 10.04},{ 'x' : 114.18, 'y' : 8.78},{ 'x' : 114.18, 'y' : 7.53},{ 'x' : 113.55, 'y' : 6.27},{ 'x' : 113.55, 'y' : 5.02},{ 'x' : 111.67, 'y' : 3.76},{ 'x' : 107.28, 'y' : 2.51},{ 'x' : 104.77, 'y' : 1.88},{ 'x' : 97.24, 'y' : 0.63},{ 'x' : 92.85, 'y' : 0.63},{ 'x' : 89.71, 'y' : 0.63},{ 'x' : 80.93, 'y' : 0.63},{ 'x' : 78.42, 'y' : 0.63},{ 'x' : 69.01, 'y' : 0.63},{ 'x' : 60.86, 'y' : 0.63},{ 'x' : 53.95, 'y' : 1.88},{ 'x' : 46.43, 'y' : 2.51},{ 'x' : 40.15, 'y' : 3.76},{ 'x' : 33.88, 'y' : 5.02},{ 'x' : 27.6, 'y' : 5.65},{ 'x' : 21.33, 'y' : 6.27},{ 'x' : 15.68, 'y' : 6.27},{ 'x' : 9.41, 'y' : 6.9},{ 'x' : 3.76, 'y' : 6.27},{ 'x' : -1.88, 'y' : 5.65},{ 'x' : -5.65, 'y' : 5.65},{ 'x' : -9.41, 'y' : 5.02},]
+
+auto_test = [
+    {
+        "auto_intake" : False,
+        "auto_roller" : False,
+        "intake_speed" : 100,
+        "wait" : 2,
+        "message" : "THIS IS A TEST"
+    }
+]
 
 field_length = 356  # CM
 
 r = Robot()
-
-r.set_team("red")
 
 r.using_gps = gps.installed()
 r.drone_mode = True
@@ -2113,11 +2013,12 @@ r["auto_roller"] = False
 
 r.save_states = False
 
-kP = 0.5
-kI = 0.25
-kD = 0
-r.flywheel_motor_1_PID.set_constants(kP,kI,kD)
-r.flywheel_motor_2_PID.set_constants(kP,kI,kD)
+# kP = 0.5
+# kI = 0.25
+# kD = 0
+# r.flywheel_motor_1_PID.set_constants(kP,kI,kD)
+# r.flywheel_motor_2_PID.set_constants(kP,kI,kD)
+
 
 r.x_vel_PID.set_constants(10,0,0)
 r.y_vel_PID.set_constants(10,0,0)
@@ -2129,34 +2030,156 @@ r.theta_vel_PID.set_constants(10,0,1)
 
 gui = GUI()
 
-
-
 gui.add_element(Switch(
     ["Team Blue", "Team Red"],
     0,
     0,
-    480,
-    240,
+    120,
+    40,
     [Color.BLUE, Color.RED],
     [r.set_team] * 2,
     ["blue", "red"]
 ))
 
 def change_drone_mode(value):
-    r.drone_mode = value
+    r.set_target_state({
+        "drone_mode" : value
+    })
     print("r.drone_mode =",r.drone_mode)
 
-# gui.add_element(Switch(
-#     ["Drone Mode", "Robot Mode"],
-#     200,
-#     100,
-#     200,
-#     50,
-#     [Color(0x888888), Color.BLACK],
-#     [change_drone_mode] * 2,
-#     (True, False),
-# ))
+gui.add_element(Switch(
+    ["Drone Mode", "Robot Mode"],
+    120,
+    0,
+    120,
+    40,
+    [Color(0x888888), Color.BLACK],
+    [change_drone_mode] * 2,
+    (True, False),
+))
 
+# Create a grid that increments the flywheel speed
+gui.add_element(Button(
+    "Flywheel +2",
+    0,
+    40,
+    120,
+    40,
+    (0x88AA88),
+    lambda: r.set_target_state({
+        "flywheel_speed" : r.flywheel_speed + 2,
+    }),
+))
+
+gui.add_element(Button(
+    "Flywheel -2",
+    0,
+    80,
+    120,
+    40,
+    (0xAA8888),
+    lambda: r.set_target_state({
+        "flywheel_speed" : r.flywheel_speed - 2,
+    }),
+))
+
+# Reset theta function
+def reset_robot_theta():
+    r.set_target_state({
+        "theta" : 0
+    })
+    r.total_theta = 0
+
+gui.add_element(Button(
+    "Reset θ",
+    0,
+    200,
+    120,
+    40,
+    (0xAAAAFA),
+    reset_robot_theta
+))
+
+# Append the current state to a path
+gui.add_element(Button(
+    "Add to Path",
+    120,
+    200,
+    120,
+    40,
+    (0xAAFAAA),
+    r.path.append(r.state.copy())
+))
+
+# Save the path by printing the representation (in the future it can be saved to sd card) 
+gui.add_element(Button(
+    "Save Path",
+    240,
+    200,
+    120,
+    40,
+    (0xAAAAAA),
+    lambda: print(repr(r.path))
+))
+
+
+# IMPORTANT NUMBERS
+gui.add_element(Text(
+    "",
+    240,
+    0,
+    120,
+    40,
+    (0x110000),
+    lambda: f("SP:", r.flywheel_speed),
+))
+
+gui.add_element(Text(
+    "",
+    360,
+    0,
+    120,
+    40,
+    (0x110000),
+    lambda: f("Real:", round(r.flywheel_1_avg_speed), round(r.flywheel_2_avg_speed))
+))
+
+gui.add_element(Text(
+    "",
+    240,
+    40,
+    120,
+    40,
+    Color.BLACK,
+    lambda: "x: {:.2f}".format(r.x_pos),
+))
+gui.add_element(Text(
+    "",
+    240,
+    80,
+    120,
+    40,
+    Color.BLACK,
+    lambda: "y: {:.2f}".format(r.y_pos),
+))
+gui.add_element(Text(
+    "",
+    240,
+    120,
+    120,
+    40,
+    Color.BLACK,
+    lambda: f("θ:", str(r.theta).split(".")[0]),
+))
+gui.add_element(Text(
+    "",
+    360,
+    0,
+    120,
+    40,
+    Color.BLACK,
+    lambda: f("temp:", flywheel_motor_1.temperature(), flywheel_motor_2.temperature())
+))
 
 ######### GUI ######### GUI ######### GUI ######### GUI ######### GUI ######### GUI #########
 
@@ -2171,13 +2194,6 @@ r.using_gps = False
 
 gui.render()
 
-
-while True:
-    gui.render()
-    gui.update()
-    if brain.screen.pressing():
-        print(brain.screen.x_position(), brain.screen.y_position())
-    wait(0.1, SECONDS)
 # autonomous()
 driver_control()
 # competition = Competition(driver_control, autonomous)
@@ -2194,23 +2210,18 @@ driver_control()
 # TODO: Make it os that the we init the robots orientation based off othe GPS (round it to the nearest 90 or 45 degrees), but make it so that drone mode still works
 # TODO: Make odometry consistent with real world measurements
 # TODO: Use trapazoids instead of rectangles when integrating the velocity
-# TODO: OMG WE CAN SAVE FILES TO THE SD CARD
 # TODO: See if we can register callback functions instead of checking things in the updates and see how much that will improve performance
-# TODO: Test auto roller function as well as make driver control work as well as previous drive function
-# TODO: Make slowest flywheel speed like 15 percent or someting
 
 # * IMPORTANT
 # TODO: Instead of rotating the driver control vector based off of the current theta, why not move it based off of the predicted theta/halfway between the two? this might remove the drifting that happens when rotation while moving
-# TODO: Work with david and figure out how to make robot driving feel better (more responsive, smooth, etc.)
 # TODO: Figure out variance in GPS sensor data and variance in model (Q and R)
 # TODO: make the offset of the gps so that it reports the position of the center of the robot
 # TODO: When the robot has an x,y position close to the edge of the field, make it so that the robot physically cannot slam into the wall (or use sensors)
 # TODO: Change this to be relative to the match time???
 
 # Not important
+# TODO: Work with david and figure out how to make robot driving feel better (more responsive, smooth, etc.)
 # TODO: test to see if threads die when they lose scope
-# TODO: Figure out the sig figs of the inbuilt Timer class, if its good lets use it instead of time.time_ms
 # TODO: make an auto path class that has information like description, color, etc.
 # TODO: Research how to utilize motor.temperature
 # TODO: Make an info screen that shows if there are any status issues wrong with the robot
-# TODO: you can draw an image on the brain screen (draw victor or something lmao)
