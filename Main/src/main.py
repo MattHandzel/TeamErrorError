@@ -3,8 +3,10 @@ import time
 from vex import *
 from math import cos, sin, pi, sqrt
 
+
+# Constants initialization
 global g
-g = -9.81
+g = -9.81  # Use for flywheel speed calculator
 
 global RAD_TO_DEG
 global DEG_TO_RAD
@@ -14,10 +16,9 @@ DEG_TO_RAD = math.pi / 180
 global r2o2
 r2o2 = math.sqrt(2) / 2
 
-# Brain should be defined by default
-brain = Brain()
 
-# Robot configuration code
+# *###### INITIATLIZATION OF PERIPHERALS
+brain = Brain()
 controller_1 = Controller(PRIMARY)
 controller_2 = Controller(PARTNER)
 left_motor_a = Motor(Ports.PORT19, GearSetting.RATIO_18_1, False)
@@ -34,7 +35,8 @@ inertial = Inertial(Ports.PORT16)
 index_motor = Motor(Ports.PORT2, GearSetting.RATIO_18_1, False)
 roller_and_intake_motor_1 = Motor(Ports.PORT3, GearSetting.RATIO_18_1, False)
 roller_and_intake_motor_2 = Motor(Ports.PORT4, GearSetting.RATIO_18_1, False)
-roller_and_intake_motor = MotorGroup(roller_and_intake_motor_1, roller_and_intake_motor_2)
+roller_and_intake_motor = MotorGroup(
+    roller_and_intake_motor_1, roller_and_intake_motor_2)
 
 roller_optical = Optical(Ports.PORT12)
 
@@ -42,22 +44,27 @@ indexer = Pneumatics(brain.three_wire_port.a)
 expansion = Pneumatics(brain.three_wire_port.b)
 
 gps = Gps(Ports.PORT13)
-vision__DISC = Signature(1, 6911, 8133, 7522,-6787, -5937, -6362,1.3, 0)
-vision__BRIGHT_DISK = Signature(2, 217, 491, 354,-7169, -6839, -7004,3, 0)
-vision_15__SIG_1 = Signature(1, 1101, 2123, 1612,-5789, -4977, -5383,1.4, 0)
-vision__DISC_4 = Signature(4, 0, 0, 0,0, 0, 0,3, 0)
-vision__SIG_5 = Signature(5, 0, 0, 0,0, 0, 0,3, 0)
-vision__SIG_6 = Signature(6, 0, 0, 0,0, 0, 0,3, 0)
-vision__SIG_7 = Signature(7, 0, 0, 0,0, 0, 0,3, 0)
-vision = Vision(Ports.PORT15, 50, vision__DISC, vision__BRIGHT_DISK, vision_15__SIG_1, vision__DISC_4, vision__SIG_5, vision__SIG_6, vision__SIG_7)
 
-DISC_SIGNATURES = [vision__DISC, vision__BRIGHT_DISK, vision_15__SIG_1, vision__DISC_4, vision__SIG_5, vision__SIG_6, vision__SIG_7]
+# Vision signatures
+vision__DISC = Signature(1, 6911, 8133, 7522, -6787, -5937, -6362, 1.3, 0)
+vision__BRIGHT_DISK = Signature(2, 217, 491, 354, -7169, -6839, -7004, 3, 0)
+vision_15__SIG_1 = Signature(3, 1101, 2123, 1612, -5789, -4977, -5383, 1.4, 0)
+vision_15__SIG_5 = Signature(4, -1, 1031, 515, -4141, -2567, -3354, 1.6, 0)
+vision_15__SIG_6 = Signature(5, -97, 51, -23, -2463, -1401, -1932, 1.9, 0)
+vision = Vision(Ports.PORT15, 50, vision__DISC, vision__BRIGHT_DISK,
+                vision_15__SIG_1, vision_15__SIG_5, vision_15__SIG_6)
+
+DISC_SIGNATURES = [vision__DISC, vision__BRIGHT_DISK,
+    vision_15__SIG_1, vision_15__SIG_5, vision_15__SIG_6]
 
 
 def init():
-    # Make it so that the motors stop instead of coast
+    '''
+    This function will initialize every subsystem with constants that wont change throughout the competition,
+    it will set driver controlled motors to break mode, start spinning motors that use the "set_velocity()" function,
+    and initialize our gyroscope
 
-    # HAVE DAVID TRY THIS OUT
+    '''
     left_motor_a.set_stopping(BRAKE)
     right_motor_a.set_stopping(BRAKE)
     left_motor_b.set_stopping(BRAKE)
@@ -66,7 +73,6 @@ def init():
     flywheel_motor_1.spin(FORWARD, 0, VOLT)
     flywheel_motor_2.spin(FORWARD, 0, VOLT)
 
-    # 
     left_motor_a.set_velocity(0, PERCENT)
     right_motor_a.set_velocity(0, PERCENT)
     left_motor_b.set_velocity(0, PERCENT)
@@ -91,17 +97,26 @@ def init():
 
     # Set the optical light power
     roller_optical.set_light_power(100)
-
-    # Wait for the gyro to settle, if it takes more then 10 seconds then close out of the loop
-    t = Timer()
+    roller_optical.object_detect_threshold(0)
 
     expansion.close()
 
+    t = Timer()
     t.reset()
+
+    # Set our target states (this initializes drone_mode on and gusing gps is determined if the gps is plugged in)
+    r.set_target_state({
+        "drone_mode": True,
+        "using_gps": gps.installed()
+    })
+
+    # Wait for the gyro to settle, if it takes more then 10 seconds then close out of the loop
+    # When the gyro sensor inits, it reads some value for the Z rotation, this is less than a few degrees, but i don't like it
     while (inertial.gyro_rate(ZAXIS) != 0 and t.value() < 10):
         print("Waiting for gyro to init...")
         wait(0.1, SECONDS)
-    
+
+    # Rumlbed the control to indicate to the driver (and me) that the robot is ready to run
     controller_1.rumble("...")
 
 
@@ -116,12 +131,16 @@ class GameObject:
 
 
 def f(*args):
+    '''
+    This function replaces the f-strings that are in python 3.8 (i think) and above, but aren't in python 3.6, which is what the brain uses
+    '''
     message = ""
     for arg in args:
         if type(arg) != str:
             arg = str(arg)
         message += " " + arg
     return message
+
 
 def sign(num):
     '''
@@ -147,9 +166,10 @@ def rotate_vector_2d(x, y, theta):
     x = x * math.cos(theta) - y * math.sin(theta)
     y = x_old * math.sin(theta) + y * math.cos(theta)
 
-    return x,y 
+    return x, y
 
-def getPathOnXYFunction(funcs, delta_t = 0.01):
+
+def getPathOnXYFunction(funcs, delta_t=0.01):
   '''
     Funcs - An array of two functions, the first one will return the x component of an objects trajectory at time point t, and the second will return the y component of an objects trajectory at time point t. It will run these function until the object hits the ground.
 
@@ -166,7 +186,7 @@ def getPathOnXYFunction(funcs, delta_t = 0.01):
   # Create an array to store the x and y positions, initialize the array with the x and y positions at the first timestep
   x = [xFunc(t)]
   y = [yFunc(t)]
-  
+
   # Run the functions until the y x of the function is less than 0 (the object has hit the ground)
   while y[-1] > 0 and x[-1] > 0:
     t += delta_t
@@ -174,18 +194,22 @@ def getPathOnXYFunction(funcs, delta_t = 0.01):
     y.append(yFunc(t))
   return x, y, t
 
+
 def returnXYFuncs(theta, v_i):
   '''This will return two funcions, for the x and y component of the objects path, depending upon the objects initial launch angle (theta) and initial velocity'''
   return returnXFunc(theta, v_i), returnYFunc(theta, v_i)
+
 
 def returnXFunc(theta, v_i):
   '''Returns the x component of the objects trajecotry using the following formula'''
   return lambda t: cos(theta) * v_i * t
 
+
 def returnYFunc(theta, v_i):
   ''' Returns the x component of the objects trajecotry using the following formula.'''
   # NOTE: This function is assuming that you live on earth and thus acceleration is gravity
   return lambda t: (1/2 * g * t * t + sin(theta) * v_i * t)
+
 
 def calculateRequiredInitialVelocityToPassThroughAPoint(coords):
   '''
@@ -210,7 +234,7 @@ def calculateRequiredInitialVelocityToPassThroughAPoint(coords):
 
   return (math.sqrt(expression))
 
-def getThetaForPathToHitPoint(v_i, point, sizeOfPoint = 0.05):
+def getThetaForPathToHitPoint(v_i, point, sizeOfPoint=0.05):
   '''This function, when given the initial velocity required, will output the angle needed to shoot at.
     point - point we want to hit
     sizeOfPoint - the tolerance at which we can hit the point, at extereme initial velocities, this needs to be very high
@@ -220,7 +244,7 @@ def getThetaForPathToHitPoint(v_i, point, sizeOfPoint = 0.05):
   iterations = 0
   minimum_distance = 0
 
-  # How this works is that it plots the trajectory of the object at changing angles of being shot, and it returns the correct angle once it is hit. This can be optimized by a hell of a lot and there is probably a mathetmatical formula that you can use to get the correct point in like 2 milliseconds buuuuuuut I already made a very good formula before that used a lot of brain power and Winter break was almost over so I settled on this solution, if I need to run this formula on a system that actually shoots things and is very time sensitive, then I will fix this, but otherwise there isn't a need to fix it. 
+  # How this works is that it plots the trajectory of the object at changing angles of being shot, and it returns the correct angle once it is hit. This can be optimized by a hell of a lot and there is probably a mathetmatical formula that you can use to get the correct point in like 2 milliseconds buuuuuuut I already made a very good formula before that used a lot of brain power and Winter break was almost over so I settled on this solution, if I need to run this formula on a system that actually shoots things and is very time sensitive, then I will fix this, but otherwise there isn't a need to fix it.
   while go:
     new_theta_1 = theta + (pi / 4) * 2 ** (-iterations)
     new_theta_2 = theta - (pi / 4) * 2 ** (-iterations)
@@ -234,7 +258,7 @@ def getThetaForPathToHitPoint(v_i, point, sizeOfPoint = 0.05):
     for x, y in zip(_x, _y):
       distance = math.sqrt((x - point[0])**2 + (y - point[1])**2)
       minimum_distance_theta_1 = min(minimum_distance_theta_1, distance)
-    
+
     _x, _y, _t = getPathOnXYFunction(returnXYFuncs(new_theta_2, v_i))
     minimum_distance_theta_2 = float('inf')
 
@@ -242,7 +266,7 @@ def getThetaForPathToHitPoint(v_i, point, sizeOfPoint = 0.05):
     for x, y in zip(_x, _y):
       distance = math.sqrt((x - point[0])**2 + (y - point[1])**2)
       minimum_distance_theta_2 = min(minimum_distance_theta_2, distance)
-    
+
     # If the new theta angles are closer to the point we want to hit, then we will use those angles
     if minimum_distance_theta_1 < minimum_distance_theta_2:
       minimum_distance = minimum_distance_theta_1
@@ -262,7 +286,8 @@ def getThetaForPathToHitPoint(v_i, point, sizeOfPoint = 0.05):
 
   return theta
 
-def getViForPathToHitPoint(theta, point, sizeOfPoint = 0.05):
+
+def getViForPathToHitPoint(theta, point, sizeOfPoint=0.05):
   '''This function, when given the initial velocity required, will output the angle needed to shoot at.
     point - point we want to hit
     sizeOfPoint - the tolerance at which we can hit the point, at extereme initial velocities, this needs to be very high
@@ -275,26 +300,28 @@ def getViForPathToHitPoint(theta, point, sizeOfPoint = 0.05):
   delta_time = 0.001
   hit_time = 0
 
-  # How this works is that it plots the trajectory of the object at changing angles of being shot, and it returns the correct angle once it is hit. This can be optimized by a hell of a lot and there is probably a mathetmatical formula that you can use to get the correct point in like 2 milliseconds buuuuuuut I already made a very good formula before that used a lot of brain power and Winter break was almost over so I settled on this solution, if I need to run this formula on a system that actually shoots things and is very time sensitive, then I will fix this, but otherwise there isn't a need to fix it. 
+  # How this works is that it plots the trajectory of the object at changing angles of being shot, and it returns the correct angle once it is hit. This can be optimized by a hell of a lot and there is probably a mathetmatical formula that you can use to get the correct point in like 2 milliseconds buuuuuuut I already made a very good formula before that used a lot of brain power and Winter break was almost over so I settled on this solution, if I need to run this formula on a system that actually shoots things and is very time sensitive, then I will fix this, but otherwise there isn't a need to fix it.
   while go:
     new_vi_1 = vi + (max_vi / 2) * 2 ** (-iterations)
     new_vi_2 = vi - (max_vi / 2) * 2 ** (-iterations)
 
     # Run a simulation for both new vi angles
 
-    _x, _y, _t = getPathOnXYFunction(returnXYFuncs(theta, new_vi_1), delta_time)
+    _x, _y, _t = getPathOnXYFunction(
+        returnXYFuncs(theta, new_vi_1), delta_time)
     minimum_distance_vi_1 = float('inf')
-    
+
     hit_time_vi_1 = 0
-    
+
     # Find the point that is the closest to the point we want to hit
     for x, y in zip(_x, _y):
       distance = math.sqrt((x - point[0])**2 + (y - point[1])**2)
       minimum_distance_vi_1 = min(minimum_distance_vi_1, distance)
       if minimum_distance_vi_1 == distance:
         hit_time_vi_1 = (_x.index(x) + 1) * delta_time
-    
-    _x, _y, _t = getPathOnXYFunction(returnXYFuncs(theta, new_vi_2), delta_time)
+
+    _x, _y, _t = getPathOnXYFunction(
+        returnXYFuncs(theta, new_vi_2), delta_time)
     minimum_distance_vi_2 = float('inf')
     hit_time_vi_2 = 0
     # Find the point that is the closest to the point we want to hit
@@ -326,39 +353,60 @@ def getViForPathToHitPoint(theta, point, sizeOfPoint = 0.05):
 
 
 class Button:
-  needs_to_render = True
+    '''
+    Basic button class, params:
+      -  name: Name of button (gets displayed in the middle of the button)
+      -  x: x position of the top-left corner of the button on the screen
+      -  y: y position of the top-left corner of the button on the screen
+      -  w: width of the button (px)
+      -  h: height of the button (px)
+      -  color: color of the button
+      -  call_back: function that gets called when the button is pressed
+      -  args: arguments that get passed to the functions
+    '''
+    needs_to_render = True    
+    
+    def __init__(self, name = "", x = 0, y = 0, w = 0, h = 0, color = 0, call_back = None, *args):
+      self.name = name
+      self.x = x
+      self.y = y
+      self.w = w
+      self.h = h
+      self.color = color
+      self.call_back = call_back
+      self.args = args  
+    def render(self):
 
-  def __init__(self, name = "", x = 0, y = 0, w = 0, h = 0, color = 0, call_back = None, *args):
-    self.name = name
-    self.x = x
-    self.y = y
-    self.w = w
-    self.h = h
-    self.color = color
-    self.call_back = call_back
-    self.args = args
+        # Draw a rectangle on the screen
+        brain.screen.draw_rectangle(self.x, self.y, self.w, self.h, self.color)   
 
-  def render(self):
-    brain.screen.draw_rectangle(self.x, self.y, self.w, self.h, self.color)
+        # Figure out the x and y position of the text so that it gets centered, the max() function prevents the text from going outside the left edge of the box
+        x_position_of_text = max(self.x + self.w / 2 - len(self.name) * 5, self.x)
+        y_position_of_text = max(self.y + self.h / 2 + 5 , self.y)
 
-    x_position_of_text = self.x + self.w / 2 - len(self.name) * 5
-    y_position_of_text = self.y + self.h / 2 + 5
+        brain.screen.print_at(self.name, x=x_position_of_text, y=y_position_of_text, opaque = False)
 
-    x_position_of_text = max(x_position_of_text, self.x)
-    y_position_of_text = max(y_position_of_text, self.y)
+    def set_callback(self, function):
+        self.call_back = function
 
-    brain.screen.print_at(self.name, x=x_position_of_text, y=y_position_of_text, opaque = False)
-  
-  def set_callback(self, function):
-    self.call_back = function
-  
-  # If we do something like button() then it will run the callback function
-  def __call__(self):
-    if self.call_back != None:
-        # If self is a variable in the call_back function then pass self as the button 
-        self.call_back(*self.args)
+    # If we do something like button() then it will run the callback function
+    def __call__(self):
+        if self.call_back != None:
+            # If self is a variable in the call_back function then pass self as the button 
+            self.call_back(*self.args)
 
 class Text:
+    '''
+    Basic text class, params:
+      -  name: Name of text (gets displayed in the middle of the text)
+      -  x: x position of the top-left corner of the text-box on the screen
+      -  y: y position of the top-left corner of the text-box on the screen
+      -  w: width that the text-box occupates 
+      -  h: height that the text-box occupates 
+      -  color: color of the text fill
+      -  call_back: function that gets called periodically to update the text name (function must return a string)
+      -  args: arguments that get passed to the functions
+    '''
     def __init__(self, name = "", x = 0, y = 0, w = 0, h = 0, color = 0, call_back = None, *args):
         self.name = name
         self.x = x
@@ -370,17 +418,15 @@ class Text:
         self.args = args
 
     def render(self):
-        # If there is a call back function, then call it and set the name to the return value
+        # If there is a call back function, then call it and set the name to the return value, else the name will never change
         if self.call_back != None:
             self.name = self.call_back(*self.args)
 
         brain.screen.draw_rectangle(self.x, self.y, self.w, self.h, self.color)
 
-        x_position_of_text = self.x + self.w / 2 - len(self.name) * 5
-        y_position_of_text = (self.y + self.h / 2) + 5
-
-        x_position_of_text = max(x_position_of_text, self.x)
-        y_position_of_text = max(y_position_of_text, self.y)
+        # Figure out the x and y position of the text so that it gets centered, the max() function prevents the text from going outside the left edge of the box
+        x_position_of_text = max(self.x + self.w / 2 - len(self.name) * 5, self.x)
+        y_position_of_text = max(self.y + self.h / 2 + 5 , self.y)
         
         brain.screen.print_at(self.name, x=x_position_of_text, y=y_position_of_text, opaque = False)
     
@@ -414,11 +460,9 @@ class Switch:
     def render(self):
         brain.screen.draw_rectangle(self.x, self.y, self.w, self.h, self.colors[self.current_state])
 
-        x_position_of_text = self.x + self.w / 2 - len(self.name[self.current_state]) * 5
-        y_position_of_text = self.y + self.h / 2 + 5
-
-        x_position_of_text = max(x_position_of_text, self.x)
-        y_position_of_text = max(y_position_of_text, self.y)
+        # Figure out the x and y position of the text so that it gets centered, the max() function prevents the text from going outside the left edge of the box
+        x_position_of_text = max(self.x + self.w / 2 - len(self.name) * 5, self.x)
+        y_position_of_text = max(self.y + self.h / 2 + 5 , self.y)
 
         brain.screen.print_at(self.name[self.current_state], x=x_position_of_text, y=y_position_of_text, opaque = False)
 
@@ -430,16 +474,16 @@ class Switch:
 
     def change_state(self):
         self.current_state = (self.current_state + 1) % len(self.states)
-        print("changing state to...", self.current_state)
 
     def run_state(self):
         self.states[self.current_state](*[arg[self.current_state] for arg in self.args])
 
     def __call__(self):
+        '''
+        Whenever the switch gets pressed, change the sate of the switch (which changes the name and the color), and run the new call-back function
+        '''
         self.change_state()
         self.run_state()
-
-
 
 
 class GUI:
@@ -450,7 +494,7 @@ class GUI:
 
   Brain screen dimensions: 480 x 240 pizels. Top left is (0,0)
 
-  Each character is 10 x 10 pixels
+  Each character in a string is 10 x 10 pixels
   '''
 
   elements = []
@@ -464,34 +508,21 @@ class GUI:
     self.elements.append(element)
 
   def update(self):
-    # for element in self.elements:
-    #   # If ANY element needs to re-render, then re-render everything
-    #   if element.needs_to_render:
-    #     break
-    # # If the for loops exists without a break statemenet
-    # else:
-    #   self.render()
-
     # If the brain has been pressed ANYWHERE
     if brain.screen.pressing() and not self.previous_brain_screen_state:
-      # X and y positions of where the finger pressed
-      x, y = brain.screen.x_position(), brain.screen.y_position()
-      # 37, 27; 45, 19; 
-
-        # so if we're making a gui, the top left corner of the button gets drawn at its x and y position:
-
-        # that means to see if something is inside of the button, the x position has to be greater than the buttons x position, and the x position of click can not minus the width cannot be larger than the button's width
-        # same thing for y
-
-        # bottom right 460, 213
-        # bottom left 20, 213
-      for element in self.elements:
-        if (x - element.x) > 0 and (x - element.x) < element.w and (y-element.y) > 0 and (y - element.y) < element.h:
-          element()
+        # X and y positions of where the finger pressed
+        x, y = brain.screen.x_position(), brain.screen.y_position()
+        for element in self.elements:
+            # Figure out if the finger press was inside the bound-box of an element
+            if (x - element.x) > 0 and (x - element.x) < element.w and (y-element.y) > 0 and (y - element.y) < element.h:
+                element()
         
     self.previous_brain_screen_state = brain.screen.pressing()
   
   def render(self):
+    '''
+    Renders each element of the gui
+    '''
     brain.screen.clear_screen()
     for element in self.elements:
       element.render()
@@ -500,9 +531,8 @@ class GUI:
 
 class Vector:
     '''
-    Vector class I wrote because basic python lists are lame
+    Vector class I wrote because basic python lists are lame, this is as slow as normal python, should be ideally replaced with numpy arrays
     '''
-
     def __init__(self, data):
         self.data = data
 
@@ -570,75 +600,11 @@ class PID:
         self.integral_error = 0
         self.previous_value = None
 
-class TargetPoint:
-    '''
-    This is the target point class, it can be used for PID controller/path following in the future (i haven't done it yet),
-    but how it intends to work is to have the robot go to a list of target points, if it is within a threshold then it is allowed
-    to go to the next target point
-    '''
-
-    def __init__(self, _x, _y, _total_tolerance_or_just_x_tolerance, _tolerance_y=-1):
-        self.x = _x
-        self.y = _y
-        if _tolerance_y == -1:
-            self.tolerance_x = _total_tolerance_or_just_x_tolerance
-            self.tolerance_y = _total_tolerance_or_just_x_tolerance
-        else:
-            self.tolerance_x = _total_tolerance_or_just_x_tolerance
-            self.tolerance_y = _tolerance_y
-
-    def check_within(self, _x, _y):
-        return abs(self.x - _x) <= self.tolerance_x and abs(self.y - _y) <= self.tolerance_y
-
-
-def get_heading_to_object(gameobject_1, gameobject_2):
-    '''
-    RETURNS IN DEGREES
-    TODO: if someone doesn't pass a gameobject then this will break everything
-    '''
-    # Checks to see if both objects are of the GameObject class
-    if gameobject_1.x_pos == gameobject_2.x_pos:
-        return 180
-
-    if gameobject_1.x_pos < gameobject_2.x_pos:
-        ang = math.atan(((gameobject_2.y_pos - gameobject_1.y_pos)) /
-                        (gameobject_2.x_pos - gameobject_1.x_pos)) * RAD_TO_DEG
-    else:
-        ang = math.atan(((gameobject_2.y_pos - gameobject_1.y_pos)) /
-                        (gameobject_2.x_pos - gameobject_1.x_pos)) * RAD_TO_DEG + 180
-    
-    ang = 90 - ang
-    if ang > 180:
-        ang -= 360
-    if ang < -180:
-        ang += 360
-
-    return ang
-
-
-class Test:
-  def __init__(self, name, args):
-    name.lower()
-    self.name = name
-    self.args = args
-  
-  def __getitem__(self, key):
-    return self.args[key]
-
-  # overload equals operator
-  def __eq__(self, name):
-    name.lower()
-    return self.name == name
-
 class Robot:
     '''
-    This is the big-boy class, this is the robot class, this is the class that controls the robot, there is a lot of stuff here
+    This is the big-boy robot class, this is the class that controls the robot, there is a lot of stuff here
     '''
-    flywheel_1_voltage_factor = 0
-    flywheel_2_voltage_factor = 0
-
-    previous_flywheel_speed = 0
-    ###* ORIENTATION/POSITION VARIABLES
+    # * ORIENTATION/POSITION VARIABLES
     total_theta = 0
     theta_offset = 0
     max_velocity: float
@@ -653,7 +619,7 @@ class Robot:
     total_x_from_encoders = 0
     total_y_from_encoders = 0
 
-    ###* FLYWHEEL
+    # * FLYWHEEL
     length: float = 38.1
 
     # Set the offset for the flywheel from the center of the robot
@@ -671,6 +637,10 @@ class Robot:
     previous_flywheel_1_error = 0
     previous_flywheel_2_error = 0
 
+    flywheel_1_voltage_factor = 0
+    flywheel_2_voltage_factor = 0
+
+    previous_flywheel_speed = 0
 
     flywheel_speed = 0
 
@@ -682,7 +652,7 @@ class Robot:
     flywheel_motor_1_error = 0
     flywheel_motor_2_error = 0
 
-    ###* DRIVETRAIN
+    # * DRIVETRAIN
 
     previous_update_time: float = 0
 
@@ -695,7 +665,7 @@ class Robot:
     wheel_distance_CM_to_TICK_coefficient: float = (drivetrain_gear_ratio / 6 * 300) / \
         (math.pi * wheel_diameter_CM)
 
-    ###* PID controllers
+    # * PID controllers
 
     flywheel_motor_1_average_output = 0
     flywheel_motor_2_average_output = 0 
@@ -725,7 +695,7 @@ class Robot:
     y_vel_PID = PID(0.1, 0, 0)
     theta_vel_PID = PID(0.1, 0, 0)
 
-    ###* MISC
+    # * MISC
     update_loop_delay = 0.01  # 10 ms
 
     # Used to keep track of time in auto and driver mode respectively, use it for nicely logging data, can be used during either modes for end game/pathfinding rules
@@ -741,6 +711,7 @@ class Robot:
     blue_goal = GameObject(-(122.63 - 70.2) * 2.54, -(122.63 - 70.2) * 2.54)
 
     flywheel_speed_levels = [
+        0,
         20,
         25,
         30,
@@ -797,7 +768,12 @@ class Robot:
         "slow_mode" : False,
         "drone_mode" : False,
         "autonomous" : False,
-        
+
+        "flywheel_torque" : 0,
+        "disc_shot" : False,
+
+        "flywheel_1_torque" : 0,
+        "flywheel_2_torque" : 0,
     }
 
     intake_timer = Timer()
@@ -807,18 +783,13 @@ class Robot:
     all_states = []
     delta_time = 0
 
+    notBlue = False
+
     save_states = False
 
     path = []
 
     def __init__(self):
-        '''
-        Initializes the robot class, computes the max velocity and acceleration
-        params -
-            x_pos - set the robot's x position
-            y_pos - set the robot's y position
-            theta - set the robot's theta
-        '''
 
         # what our max velocity "should" be (can go higher or lower)
         self.max_velocity = ((self.wheel_max_rpm / 60) *
@@ -829,12 +800,17 @@ class Robot:
         # Set origin of the gps
         gps.set_origin(0,0)
 
+        # Thsee next few lines just make sure that the state system works, and saves and initial state that we return to when the autonomous mode ends
         self.initial_state = self.state.copy()
         self.set_target_state(self.state)
         self.previous_state = self.state
     
     # There are two init methods, this init initializes the class, the other init method we call to initlize the robot
     def init(self):
+        '''
+        Different than the Robot()__init__ dunder that gets called when the robot is made, this is a manual initialization that 
+        starts the update loop and turns on the robot
+        '''
         
         # Set heading based on gps
         if self.using_gps:
@@ -853,9 +829,12 @@ class Robot:
 
 
     def update_loop(self):
-      while True:
-        self.update()
-        wait(self.update_loop_delay, SECONDS)
+        '''
+        Runs the self.update command every self.update_loop_delay seconds forever
+        '''
+        while True:
+          self.update()
+          wait(self.update_loop_delay, SECONDS)
 
     def update(self):
         '''
@@ -868,6 +847,7 @@ class Robot:
         if self.delta_time == 0:
             return
         
+        # If we want to save the states of the the robot (which will allow us to do cool things such as recording our matches and replaying our momvements, this must be turned to true)
         if self.save_states:
             self.all_states.append(self.state)
 
@@ -911,12 +891,12 @@ class Robot:
         elif delta_theta < -180:
             delta_theta += 360
 
-
         # target_x_vel = self.target_state["x_vel"]
         # target_y_vel = self.target_state["y_vel"]
         # target_theta_vel = self.target_state["theta_vel"]
 
-
+        # Regex expression to see if any property of the robot is being set to value
+        
         # Make sqrt the delta theta, so that the tolerance is not linear but a sqrt relationshup
         delta_theta = math.sqrt(abs(delta_theta)) * sign(delta_theta) 
 
@@ -998,27 +978,27 @@ class Robot:
         left_motor_b.set_velocity(left_motor_b_target_velocity, PERCENT)
         right_motor_b.set_velocity(right_motor_b_target_velocity, PERCENT)
 
-        # Display content
-        # print("left_motor_a_target_velocity ", left_motor_a_target_velocity)
-        # print("right_motor_a_target_velocity ", right_motor_a_target_velocity)
-        # print("left_motor_b_target_velocity ", left_motor_b_target_velocity)
-        # print("right_motor_b_target_velocity ", right_motor_b_target_velocity)
-        # print("")
     
     def expansion_update(self):
+        '''
+        Launch the expansion
+        '''
         if self.target_state["launch_expansion"]:
             expansion.open()
-        
-            
     
     def estimate_state(self):
         '''
         Estimates the state of the robot
         '''
+
+        # Get the time the program was running for 
         self.state["time"] = getattr(time, "ticks_ms")() / 1000
+        
+        # Find our angular velocity
         self.theta_vel = inertial.gyro_rate(ZAXIS)
         
-        # is a magic number that makes the gyro work better (experimentall I found that when the gyro reported that it spun 1 time, it actually overshot by about 3 degrees)
+        # Find the total amount the robot has turned by integrating the velocity, then dividing it by a number
+        # I found that makes the gyro work better (experimentall I found that when the gyro reported that it spun 1 time, it actually overshot by about 3 degrees)
         self.total_theta += self.theta_vel * self.delta_time / 0.99375 / 2
         
         self.theta = self.total_theta - (self.total_theta // 360 * 360)
@@ -1026,25 +1006,26 @@ class Robot:
         # Use encoders to get our x and y positions so that we can take the derivative and get our velocity
         self.x_enc, self.y_enc = self.get_position_from_encoders()
 
+        # Find our delta encoders amount
         delta_x_from_encoders = self.x_enc - self.previous_state["x_enc"]
         delta_y_from_encoders = self.y_enc - self.previous_state["y_enc"]
 
-        # delta_x_from_encoders *= 0.86
-        # delta_y_from_encoders *= 0.86 
-
+        # Rotate the numbers based on our orientation
         delta_x_from_encoders, delta_y_from_encoders = rotate_vector_2d(delta_x_from_encoders, delta_y_from_encoders, -self.theta * DEG_TO_RAD)
 
         # Get the velocity of the robot in deg/s for 4 wheels
         self.x_vel = delta_x_from_encoders / self.delta_time
         self.y_vel = delta_y_from_encoders / self.delta_time
 
-
         # Velocity of robot from gps perspective
         x_from_gps = 0
         y_from_gps = 0
         alpha = 0
 
+        # If the gps is being used and not being obstructed
         if self.using_gps and gps.quality() >= 100: 
+            
+            # We can choose to use the gps or the gyro for our heading
             # self.total_theta = gps.heading()
 
             # Update alpha to value that uses gps
@@ -1052,15 +1033,13 @@ class Robot:
             x_from_gps = gps.x_position(DistanceUnits.CM)
             y_from_gps = gps.y_position(DistanceUnits.CM)
 
+            # If we want to figure out our velocity from the gps
             delta_x_from_gps = gps.x_position(DistanceUnits.CM) - self.previous_x_from_gps 
             delta_y_from_gps = gps.y_position(DistanceUnits.CM) - self.previous_y_from_gps 
 
             self.previous_x_from_gps = gps.x_position(DistanceUnits.CM)
             self.previous_y_from_gps = gps.y_position(DistanceUnits.CM)
-            # print(abs(x_from_gps-self.x_pos), abs(y_from_gps-self.y_pos))
-            if abs(x_from_gps-self.x_pos) > 100 or abs(y_from_gps-self.y_pos) > 100:
-                self.x_pos = x_from_gps
-                self.y_pos = y_from_gps
+
 
         # If we have not moved (from the encoders point of view), and the gps is not changing that much, then use the rolling average from the gps
         # If gps is enabled then the low and high pass filter will make the x and y position more stable, if gps is not enabled then the formula won't use gps data (alpha would equal 0)
@@ -1073,39 +1052,57 @@ class Robot:
         self.total_x_from_encoders += delta_x_from_encoders
         self.total_y_from_encoders += delta_y_from_encoders
 
+        # If we are close to our target position then say that we reached our target state (useful for autonomous mode)
         if abs(self.state["x_pos"] - self.target_state["x_pos"]) < self.position_tolerance and abs(self.state["y_pos"] - self.target_state["y_pos"]) < self.position_tolerance:
-            # print("TARGET STATE REACHED")
             self.target_reached = True
         
+        # Theta offset that is set up the gps 
         self.theta -= self.theta_offset
+
+
+        # Get the torque on the flywheel
+        self["flywheel_1_torque"] = flywheel_motor_1.torque()
+        self["flywheel_2_torque"] = flywheel_motor_2.torque()
+        
+        # Figure out if the disc has been shot by seeing if there is a large change in the flywheel torque
+        if ((self["flywheel_1_torque"] - self.previous_state["flywheel_1_torque"]) + (self["flywheel_2_torque"] - self.previous_state["flywheel_2_torque"])) / 2 > 0.0075:
+            self.state["disc_shot"] = True
+        else:
+            self.state["disc_shot"] = False
+
     
     def intake_update(self):
-        # If we have auto_intake enbaled 
+        # If we have auto_intake enbaled then use the camera and try to look for the disc signatures
         if self["auto_intake"]:
             objs = [vision.take_snapshot(z) for z in range(8)]
             objs = [obj for obj in objs if obj]
             if len(objs) > 1:
                 self.intake_speed = 100
+
+                # Assume that there's a disc in the intake 
                 self["disc_in_intake"] = True
                 self.intake_timer.reset()
-            elif self.intake_timer.time(MSEC) > 2000: # If it has been more than 1 second since we last saw a disc, stop intake
+            elif self.intake_timer.time(MSEC) > 1500: # If it has been more than 1 second since we last saw a disc, stop intake
                 self.intake_speed = 0
                 self["disc_in_intake"] = False
-
+        
+        # if self["roller_state"] == "none":
         roller_and_intake_motor_1.spin(REVERSE, self.intake_speed, VelocityUnits.PERCENT)
         roller_and_intake_motor_2.spin(FORWARD, self.intake_speed, VelocityUnits.PERCENT)
         
     def roller_update(self):
-        # Only if we have auto_roller enabled will we change the roller_speed
         if self["auto_roller"]:
+
+            # If the topical sensor does not detect an object then turn off the roller
             if not roller_optical.is_near_object():
                 self["roller_state"] = "none"
                 self["roller_speed"] = 0
             else:
+                
                 # If the sensor detects and object and if that object is red, or blue then run the roller
                 if roller_optical.color() == Color.RED:
                     self["roller_state"] = "red"
-                elif roller_optical.is_near_object() and roller_optical.color() == Color.BLUE:
+                elif roller_optical.color() == Color.BLUE:
                     self["roller_state"] = "blue"
                 else:
                     self["roller_state"] = "none"
@@ -1121,9 +1118,10 @@ class Robot:
                     if self.previous_state["roller_state"] != self["roller_state"]:
                         self["roller_speed"] = -50
         
-        if not self["disc_in_intake"]:
+        # If the roller sees the red or blue roller then spin the roller/intake system
+        if self["roller_state"] != "none":
             roller_and_intake_motor_1.spin(REVERSE, self["roller_speed"], VelocityUnits.PERCENT)
-            roller_and_intake_motor_2.spin(REVERSE, self["roller_speed"], VelocityUnits.PERCENT)
+            roller_and_intake_motor_2.spin(FORWARD, self["roller_speed"], VelocityUnits.PERCENT)
 
 ##### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ###
     def set_target_state(self, _state):
@@ -1137,12 +1135,15 @@ class Robot:
                 
                 if key == "theta":
                     self.target_state[key] = _state[key] % 360
-                    print("setthing theta to", _state[key])
-            
+        
+        # This fucntion updates any constants that are not targets
         self.update_constants(_state)
+
+        # Make is so that we haven't reached our target state because we just set our target state
         self.target_reached = False
     
     def update_constants(self, _state):
+        # This fucntion updates any constants that are not targets
         if "drone_mode" in _state:
             self.drone_mode = _state["drone_mode"]
         if "slow_mode" in _state:
@@ -1160,15 +1161,17 @@ class Robot:
         if "flywheel_speed" in _state:
             self.flywheel_speed = _state["flywheel_speed"]
 
-    
     def __setitem__(self, key, value):
+        '''
+        Whenever you try to set an item from the robot with self["key"] = SOMETHING or robot["key"] = SOMETHING then access the robot's state
+        '''
         self.state[key] = value
     
     def __getitem__(self, key):
+        '''
+        Whenever you try to get an item from the robot with self["key"] or robot["key"] then access the robot's state
+        '''
         return self.state[key]
-
-    def print_debug_info(self):
-        print("left_motor_a_position:", left_motor_a.position(DEGREES), "left_motor_b_position:", left_motor_b.position(DEGREES), "right_motor_a_position:", right_motor_a.position(DEGREES), "right_motor_b_position:", right_motor_b.position(DEGREES))
 
     def set_time_to_top_speed(self, _time):
         '''
@@ -1187,18 +1190,15 @@ class Robot:
 
     def has_moved(self):
         '''
-        Function returns true if the values of the encoders for the motors have
-        changed AT ALL
+        Function returns true if the values of the encoders for the motors have changed AT ALL
         '''
         return self.x_vel == 0 and self.y_vel == 0
 
     def set_team(self, _color):
         '''
-        Sets the team for the robot so that we can move the rollers to our team color, or shoot disks just into our goal, etc.
+        Sets the team for the robot so that we can move the rollers to our team color, or shoot discs just into our goal, etc.
         '''
-        print("SET_TEAM IS:\t", _color)
         _color.lower()
-        print("INPUT FROM SET_TEAM IS:\t", _color)
         if _color == "red":
             self.notBlue = True
             self.goal = self.red_goal
@@ -1208,12 +1208,6 @@ class Robot:
             self.notBlue = False
             return
         raise Exception("broo you dodn't set a proper team color")
-
-    def reset_theta(self):
-        '''
-        Resets the theta of the robot to 0
-        '''
-        self.total_theta = 0
 
     def stop_moving(self):
         '''
@@ -1260,12 +1254,11 @@ class Robot:
 
             if abs(x_pos) > abs(y_pos):
                 roller_angle = 90
-        print("r.turn_to_roller: Current position is", x_pos, y_pos, "and setting heading to", roller_angle)
         if roller_angle == -1:
             self.print("Not in a proper quadrant...")
             return
 
-        Thread(self.turn_to_heading,(roller_angle,))
+        # Thread(self.,(roller_angle,))
 
     def get_position_from_encoders(self):
         '''
@@ -1281,7 +1274,6 @@ class Robot:
 
     def get_position(self):
         return self.x_pos, self.y_pos
-        # return self.get_position_from_encoders()
 
     def run_autonomous(self, procedure):
         '''
@@ -1290,16 +1282,7 @@ class Robot:
             setX - sets the x position of the robot
             setY - sets the y position of the robot
             setTheta - sets the theta of the robot
-            x - move the robot to that x position
-            y - move the robot to that y position
-            theta - rotate the robot to that theta
-            wait - wait for that many seconds
-            actions - a list of actions to run
-                unload - unload the disk
-                load - load the disk
-                shoot - shoot the disk
-                spin_roller - spin the roller
-            message - a message to print to the console and brain (for debugging purposes)
+            other params - any other param that is passed that is a key in the robot's state sets the target state of the robot to that value
 
         '''
         # Update loop
@@ -1307,10 +1290,7 @@ class Robot:
         self.autonomous_timer.reset()
         
         for step in procedure:
-            target_state = {
-                "x_vel" : 10,
-                "y_vel" : 10,
-            }
+            target_state = {}
             if "setX" in step:
                 self.x_pos = step["setX"]
             if "setY" in step:
@@ -1321,21 +1301,10 @@ class Robot:
                     print("setting key of", key, "to", step[key])
                     target_state[key] = step[key]
 
-            # if "actions" in step.keys():
-            #     if "unload" in step["actions"]:
-            #         r.unload()
-            #     if "load" in step["actions"]:
-            #         r.load()
-
-            #     if "spin_roller" in step["actions"]:
-            #         r.spin_roller()
-
             if "message" in step.keys():
                 self.print(step["message"])
 
-            # TODO: add threading here
             if "x" in step.keys() and "y" in step.keys():
-                print("Going to position:", step["x"], step["y"])
                 target_state["x_pos"] = step["x"]
                 target_state["y_pos"] = step["y"]
             
@@ -1344,31 +1313,16 @@ class Robot:
             if "wait" in step.keys():
                 wait(step["wait"], SECONDS)
 
+            # While we haven't reached the target state then just wait
             while not self.target_reached:
-                self.update()
                 wait(0.1, SECONDS)
 
+        # After the autonomous mode is over then set the target state to the robot's initial state (so we don't move and turn everything off)
         self.set_target_state(self.initial_state)
 
-    def turn_to_heading(self, _heading, _wait=True):
-        '''
-        Makes the robot turn to a specific heading
-        '''
-        # There are two ways to approach this, one of them is to compute the positions
-        # that the motors need to go to in order to turn the robot (that number can be)
-        # calculated by figuring out the circumference that the robot will rotate around
-        # and then divide that by the number of degrees, or it can be found experimentally
-
-        # Another way to approach this is to use a PID-esque loop where we check our current heading
-        # at each timestep and drive the robot at a specific velocity until the desired heading is reached
-
-        # self.print(f"Turning to heading {_heading}")
-        
-        return
-
-    # if you are readign this code and are not me (Matt Handzel) and don't know what this is, then look up python getters and setters
 ##### PROPERTIES ##### PROPERTIES #####  PROPERTIES #####  PROPERTIES #####  PROPERTIES #####  PROPERTIES #####  PROPERTIES #####  PROPERTIES #####  PROPERTIES ##### 
 
+    # if you are reading this code and are not me (Matt Handzel) and don't know what this is, then look up python getters and setters
     @property
     def position(self):
         return (self.x_pos, self.y_pos)
@@ -1510,29 +1464,6 @@ class Robot:
         '''
         expansion.open()
 
-
-    def turn_to_object(self, _gameobject):
-        '''
-        This function will have the robot turn to face the object
-        '''
-        # Get the delta theta needed for the robot to turn
-        delta_theta = (get_heading_to_object(
-            self, _gameobject) - inertial.heading(DEGREES))
-
-        # Makes delta theta to go from [0, 360)
-        while delta_theta < 0:
-            delta_theta += 360
-        while delta_theta >= 360:
-            delta_theta -= 360
-
-        # Makes delta theta to be from [-180, 180] so that the robot turns the fastest way possible
-        if delta_theta >= 180:
-            delta_theta -= 360
-        elif delta_theta < -180:
-            delta_theta += 360
-
-        # Use a PID loop or just basic controls to have the robot turn towards the object here
-
 ##### FLYWHEEL ### FLYWHEEL ### FLYWHEEL ### FLYWHEEL ### FLYWHEEL ### FLYWHEEL ### FLYWHEEL ### FLYWHEEL ###
     def flywheel_update(self):
         self.flywheel_pid(self.flywheel_speed)        
@@ -1594,19 +1525,12 @@ class Robot:
 
         # derivative_term_flywheel_2 = 0
 
-        # If we are more than 10 percent off of the target speed
-        # if abs(self.flywheel_1_avg_speed - self.flywheel_speed) > 5:
         self.flywheel_1_voltage_factor += proportional_term_flywheel_1 - derivative_term_flywheel_1 + (self.flywheel_speed - self.previous_flywheel_speed) * 0.1
-        # if abs(self.flywheel_2_avg_speed - self.flywheel_speed) > 5:
         self.flywheel_2_voltage_factor += proportional_term_flywheel_2 - derivative_term_flywheel_2 + (self.flywheel_speed - self.previous_flywheel_speed) * 0.1
-        if self.flywheel_1_voltage_factor > MAX_VOLTAGE:
-            self.flywheel_1_voltage_factor = MAX_VOLTAGE
-        if self.flywheel_2_voltage_factor > MAX_VOLTAGE:
-            self.flywheel_2_voltage_factor = MAX_VOLTAGE
-        if self.flywheel_1_voltage_factor < -MAX_VOLTAGE:
-            self.flywheel_1_voltage_factor = -MAX_VOLTAGE
-        if self.flywheel_2_voltage_factor < -MAX_VOLTAGE:
-            self.flywheel_2_voltage_factor = -MAX_VOLTAGE
+
+        # Clamp the voltage so we don't send more than the maximum I stated 
+        self.flywheel_1_voltage_factor = clamp(self.flywheel_1_voltage_factor, -MAX_VOLTAGE, MAX_VOLTAGE)
+        self.flywheel_2_voltage_factor = clamp(self.flywheel_2_voltage_factor, -MAX_VOLTAGE, MAX_VOLTAGE)
 
         flywheel_motor_1.spin(FORWARD, self.flywheel_1_voltage_factor + proportional_term_flywheel_1 * 0, VOLT)
         flywheel_motor_2.spin(FORWARD, self.flywheel_2_voltage_factor + proportional_term_flywheel_2 * 0, VOLT)
@@ -1618,34 +1542,33 @@ class Robot:
         self.previous_flywheel_1_avg_speed = self.flywheel_1_avg_speed
         self.previous_flywheel_2_avg_speed = self.flywheel_2_avg_speed
 
-        # self.previous_flywheel_1_error = self.flywheel_speed - self.flywheel_1_avg_speed
-        # self.previous_flywheel_2_error = self.flywheel_speed - self.flywheel_2_avg_speed
         self.previous_flywheel_speed = float(self.flywheel_speed)
-        # print("Error", error_1, error_2, "Velocity",flywheel_motor_1.velocity(VelocityUnits.PERCENT), "Output", output_1, output_2)
 
     
-    def shoot_disk(self):
+    def shoot_disc(self):
         '''
-        This function will shoot a disk from the flywheel
+        This function will shoot a disc from the flywheel
         '''
-        self.is_shooting = True
-        # Compute speed that the flywheel needs to speed
-        
-        # Set the motors to the speed
+        if self.is_shooting:
+            return
 
-        # Index a disk out of the magazine
-        # index_motor.spin_for(FORWARD, 2, TURNS, True)
+        self.is_shooting = True
+
         indexer.open()
-        wait(1, SECONDS)
+        
+        t = Timer()
+        t.reset()
+        
+        while not self["disc_shot"]:
+            wait(0.01, SECONDS)
+
         indexer.close()
         
         self.is_shooting = False
-        # Launch disk
-        pass
 
     def compute_speed_of_flywheel(self):
         '''
-        Because we know our distance to the goal, we can compute the speed that the flywheel needs to launch in order to make the disk in
+        Because we know our distance to the goal, we can compute the speed that the flywheel needs to launch in order to make the disc in
         '''
         # Equation to find the speed that the flywheel needs:
 
@@ -1658,126 +1581,149 @@ class Robot:
         v_i, hit_time = getViForPathToHitPoint(self.flywheel_angle, (point), sizeOfPoint = 0.001)
         print("SETTING THE FLYWHEEL TO x M/S")
 
-        # Compute the linear speed that the disk needs to be launched to
+        # Compute the linear speed that the disc needs to be launched to
         # math.cos(theta_flywheel * DEG_TO_RAD)
 
         # distance_to_goal * theta_flywheel
         pass    
 
+
+
+class Test:
+    '''
+    Tests that the robot doctor program uses
+    '''
+    def __init__(self, name, args):
+      name.lower()
+      self.name = name
+      self.args = args
+    
+    def __getitem__(self, key):
+      return self.args[key]
+
+    # overload equals operator
+    def __eq__(self, name):
+      name.lower()
+      return self.name == name
+
+
 class RobotDoctor:
-  r = Robot()
-  flywheel_speed_tolerance = 2
-  
-  # Initalize robot and robot peripherals
-  def init(self):
-    init()
-    self.r.init()
+    '''
+    Class that runs tests on the robot to make sure it is working as intended
+    '''
+    r = Robot()
+    flywheel_speed_tolerance = 2
+    
+    # Initalize robot and robot peripherals
+    def init(self):
+      init()
+      self.r.init()
 
-  def run_tests(self, tests):
-    for test in tests:
-      self.run_test(test)
-  
-  def fail_test(self, message):
-    self.r.print(message)
-    controller_1.rumble("...---...")
-  
-  def pass_test(self, message):
-    self.r.print(message)
-    controller_1.rumble("-")
-
-  def run_test(self, test):
-    if test == "flywheel":
-      self.test_flywheel(test["comprehensive"])
-    elif test == "flywheel_temp":
-      self.test_flywheel_temp()
-    elif test == "gps":
-      self.test_gps(test["comprehensive"])
-    else:
-      self.r.print("Test not found!")
+    def run_tests(self, tests):
+      for test in tests:
+          self.run_test(test)
+    
+    def fail_test(self, message):
+      self.r.print(message)
       controller_1.rumble("...---...")
     
-  def test_flywheel(self, comprehensive = False):
-    '''
-    Test the flywheel speed to see if it holds over time, if the test is comprehensive it will see if the flywheel speed holds over 5 seconds and do more minute changes in speed 
-    '''
-    test_time = 5 if comprehensive else 2
-    failed = False
+    def pass_test(self, message):
+      self.r.print(message)
+      controller_1.rumble("-")
 
-    for speed in range(0,101,(10 if comprehensive else 25)):
-      self.r.set_target_state({
-        "flywheel_speed" : speed,
-      })
-      self.r.print("Testing flywheel...")
-      wait(2, SECONDS)
-      timer = Timer()
-      timer.reset()
-
-      # Run the test for 2 seconds and if the average speed is not good
-      while timer.time(SECONDS) < test_time:
-        flywheel_1_difference = self.r.flywheel_1_avg_speed - self.r.target_state["flywheel_speed"]
-        flywheel_2_difference = self.r.flywheel_2_avg_speed - self.r.target_state["flywheel_speed"]
-        print(flywheel_1_difference, flywheel_2_difference)
-        if flywheel_1_difference > self.flywheel_speed_tolerance or flywheel_2_difference > self.flywheel_speed_tolerance:
-          self.r.print(f("Flywheel speed should be", self.r.target_state["flywheel_speed"], "1:", self.r.flywheel_1_avg_speed,"2:", self.r.flywheel_2_avg_speed))
-          failed = True
-        wait(0.25, SECONDS)
-    
-    # If the robot failed this test then do a little rumble rumble
-    if not failed:
-      self.pass_test("Flywheel test complete!")
-    else:
-      self.fail_test("Flywheel test failed!")
-  
-  def test_flywheel_temp(self):
-    if flywheel_motor_1.temperature() > 45 or flywheel_motor_2.temperature() > 45:
-      self.fail_test(f("Flywheel motor is too hot! 1:", flywheel_motor_1.temperature(), "2:", flywheel_motor_2.temperature()))
-    else:
-      self.pass_test("Flywheel test complete!")
-  
-
-  def test_gps(self, comprehensive):
-    path = [
-      {
-        "x" : 0,
-        "y" : 0,
-        "theta" : 0,
-      },
-      {
-        "x" : 100,
-        "y" : 100,
-        "theta" : 180,
-      },
-      {
-        "x" : 100,
-        "y" : -100,
-        "theta" : 0,
-      },
-      {
-        "x" : -100,
-        "y" : -100,
-        "theta" : -180,
-      },
-      {
-        "x" : -100,
-        "y" : 100,
-        "theta" : 0,
-      },
-      {
-        "x" : 0,
-        "y" : 0,
-        "theta" : 180,
-      },
-    ]
-
-
-    for point in path:
-      self.r.set_target_state(point)
-      self.r.print(("Robot should be going to...", point))
+    def run_test(self, test):
+      if test == "flywheel":
+          self.test_flywheel(test["comprehensive"])
+      elif test == "flywheel_temp":
+          self.test_flywheel_temp()
+      elif test == "gps":
+          self.test_gps(test["comprehensive"])
+      else:
+          self.r.print("Test not found!")
+          controller_1.rumble("...---...")
       
-      # Go to that position until the up button is pressed
-      while not controller_1.buttonUp.pressing():
-        self.r.print(f("X:", self.r.x_pos, "Y:", self.r.y_pos, "Theta:", self.r.theta))
-        wait(1, SECONDS)
+    def test_flywheel(self, comprehensive = False):
+      '''
+      Test the flywheel speed to see if it holds over time, if the test is comprehensive it will see if the flywheel speed holds over 5 seconds and do more minute changes in speed 
+      '''
+      test_time = 5 if comprehensive else 2
+      failed = False
+
+      for speed in range(0,101,(10 if comprehensive else 25)):
+          self.r.set_target_state({
+            "flywheel_speed" : speed,
+          })
+          self.r.print("Testing flywheel...")
+          wait(2, SECONDS)
+          timer = Timer()
+          timer.reset()
+
+          # Run the test for 2 seconds and if the average speed is not good
+          while timer.time(SECONDS) < test_time:
+            flywheel_1_difference = self.r.flywheel_1_avg_speed - self.r.target_state["flywheel_speed"]
+            flywheel_2_difference = self.r.flywheel_2_avg_speed - self.r.target_state["flywheel_speed"]
+            print(flywheel_1_difference, flywheel_2_difference)
+            if flywheel_1_difference > self.flywheel_speed_tolerance or flywheel_2_difference > self.flywheel_speed_tolerance:
+                self.r.print(f("Flywheel speed should be", self.r.target_state["flywheel_speed"], "1:", self.r.flywheel_1_avg_speed,"2:", self.r.flywheel_2_avg_speed))
+                failed = True
+            wait(0.25, SECONDS)
+      
+      # If the robot failed this test then do a little rumble rumble
+      if not failed:
+          self.pass_test("Flywheel test complete!")
+      else:
+          self.fail_test("Flywheel test failed!")
+    
+    def test_flywheel_temp(self):
+      if flywheel_motor_1.temperature() > 45 or flywheel_motor_2.temperature() > 45:
+          self.fail_test(f("Flywheel motor is too hot! 1:", flywheel_motor_1.temperature(), "2:", flywheel_motor_2.temperature()))
+      else:
+          self.pass_test("Flywheel test complete!")
+    
+
+    def test_gps(self, comprehensive):
+      path = [
+          {
+            "x" : 0,
+            "y" : 0,
+            "theta" : 0,
+          },
+          {
+            "x" : 100,
+            "y" : 100,
+            "theta" : 180,
+          },
+          {
+            "x" : 100,
+            "y" : -100,
+            "theta" : 0,
+          },
+          {
+            "x" : -100,
+            "y" : -100,
+            "theta" : -180,
+          },
+          {
+            "x" : -100,
+            "y" : 100,
+            "theta" : 0,
+          },
+          {
+            "x" : 0,
+            "y" : 0,
+            "theta" : 180,
+          },
+      ]
+
+
+      for point in path:
+          self.r.set_target_state(point)
+          self.r.print(("Robot should be going to...", point))
+          
+          # Go to that position until the up button is pressed
+          while not controller_1.buttonUp.pressing():
+            self.r.print(f("X:", self.r.x_pos, "Y:", self.r.y_pos, "Theta:", self.r.theta))
+            wait(1, SECONDS)
         
         
 prematch_checks = [
@@ -1817,7 +1763,6 @@ all_tests = [
   )
 ]
 
-wait(30, MSEC)
 
 ######## COMPETITION FUNCTIONS ### COMPETITION FUNCTIONS ### COMPETITION FUNCTIONS ### COMPETITION FUNCTIONS ###
 def autonomous():
@@ -1825,7 +1770,6 @@ def autonomous():
     r.stop_moving()
 
 def driver_control():
-    # Change this to be relative to the match time???
     timer = Timer()
     timer.reset()
 
@@ -1836,6 +1780,7 @@ def driver_control():
 
     r.autonomous_timer.reset()
     
+    # A dictionary that stores the previous button states so that we can reference previous states without having to make a new variable every time 
     previous_controller_states = {
         "buttonL1" : controller_1.buttonL1.pressing(),
         "buttonR1" : controller_1.buttonR1.pressing(),
@@ -1851,33 +1796,27 @@ def driver_control():
         "buttonB" : controller_1.buttonB.pressing(),
     }
 
-    r.auto_intake = True
-    r.auto_roller = False
-
-    gui.render()
     while True:
-
+        # Render and update the gui before everything else
         gui.update()
         gui.render()
-        # Update the robot's information
-
 
         new_theta = controller_1.axis1.position() * 0.5
-        # if controller_1.axis1.position() == 0:
-        #     new_theta = r.target_state["theta"] - r.theta
 
         new_x = (controller_1.axis4.position()) 
         new_y = (controller_1.axis3.position())
+
+        # Update the target state of the robot so that in its update() function it does everything there
         r.set_target_state(
             {
                 "override_velocity_x" : new_x,
                 "override_velocity_y" : new_y,
                 "theta" : r.theta + new_theta,
                 "slow_mode" : controller_1.buttonL1.pressing(),
-                "auto_intake": False,
                 "intake_speed" : controller_1.buttonL1.pressing() * 100 - controller_1.buttonR1.pressing() * 100,
             }
         )
+
 
         if controller_1.buttonA.pressing():
             r.set_target_state({
@@ -1922,14 +1861,11 @@ def driver_control():
                 r.set_target_state({
                     "theta" : 180,
                 })
+        
         # Timer to print things out to the terminal every x seconds
-        if (timer.time() > 0.1 * 1000):
-            # print(r.flywheel_speed, flywheel_motor_1.velocity(PERCENT),flywheel_motor_2.velocity(PERCENT), r.flywheel_motor_1_error, r.flywheel_motor_2_error)
-            # print(r.state["override_velocity_x"], r.state["override_velocity_y"], r.state["theta"])
-            # print(r.x_pos, r.y_pos, r.theta, r.target_state["theta"])
-
+        if (timer.time() > 0.02 * 1000):
             # Print the flywheel torque
-            print("flywheel_motor_torque", flywheel_motor_1.torque(PERCENT), flywheel_motor_2.torque(PERCENT), "intake", roller_and_intake_motor_1.torque(PERCENT), roller_and_intake_motor_2.torque(PERCENT))
+            print("flywheel_motor_torque", flywheel_motor_1.torque(), flywheel_motor_2.torque(), "intake", roller_and_intake_motor_1.torque(), roller_and_intake_motor_2.torque())
             controller_1.screen.clear_row(3)
             controller_1.screen.print(f("FLY:", r.flywheel_speed, "ang:", round(r.theta)))
             
@@ -1942,8 +1878,9 @@ def driver_control():
         elif controller_1.buttonDown.pressing():
             expansion.close()
         
+        # Shoot a disc if either of these are pressing
         if controller_1.buttonLeft.pressing() or controller_1.buttonRight.pressing():
-            r.shoot_disk()
+            r.shoot_disc()
 
         # When the buttons are pressed to change the level of the flywheel speed, r2 decreases level, l2 increases level
         if controller_1.buttonR2.pressing() and not previous_controller_states["buttonR2"]:
@@ -1952,8 +1889,8 @@ def driver_control():
             temp_copy.sort()
             new_flywheel_speed = temp_copy[min(temp_copy.index(r.flywheel_speed)+1,len(temp_copy)-1)]
             r.set_target_state({
-                # "flywheel_speed" : min(r.flywheel_speed + 2, 100)
-                "flywheel_speed" : new_flywheel_speed
+                "flywheel_speed" : min(r.flywheel_speed + 2, 100)
+                # "flywheel_speed" : new_flywheel_speed
             })
 
         elif controller_1.buttonL2.pressing() and not previous_controller_states["buttonL2"]:
@@ -1962,8 +1899,8 @@ def driver_control():
             temp_copy.sort()
             new_flywheel_speed = temp_copy[max(temp_copy.index(r.flywheel_speed)-1,0)]
             r.set_target_state({                
-                # "flywheel_speed": max(r.flywheel_speed - 2, 0)
-                "flywheel_speed": new_flywheel_speed
+                "flywheel_speed": max(r.flywheel_speed - 2, 0)
+                # "flywheel_speed": new_flywheel_speed
             })
 
         # Update previous controller states so we can track what the controller did before, we use this so that we can see if a button was pressed, not held, etc.
@@ -1981,7 +1918,6 @@ def driver_control():
             "buttonA" : controller_1.buttonA.pressing(),
             "buttonB" : controller_1.buttonB.pressing(),
         }
-
 
         wait(0.01, SECONDS)
 
@@ -2004,44 +1940,32 @@ auto_test = [
 
 field_length = 356  # CM
 
+# Initializes a robot object
 r = Robot()
-
-r.using_gps = gps.installed()
-r.drone_mode = True
-r.slow_mode = False
-r["auto_roller"] = False
-
-r.save_states = False
-
-# kP = 0.5
-# kI = 0.25
-# kD = 0
-# r.flywheel_motor_1_PID.set_constants(kP,kI,kD)
-# r.flywheel_motor_2_PID.set_constants(kP,kI,kD)
-
 
 r.x_vel_PID.set_constants(10,0,0)
 r.y_vel_PID.set_constants(10,0,0)
 r.theta_vel_PID.set_constants(10,0,1)
 
-########## GUI ########## GUI ##########
+######### GUI ######### GUI ######### GUI ######### GUI ######### GUI ######### GUI #########
 
-# See if this can be moved in the gui.py file to make it make a little bit more sense
-
+# Initialize the gui
 gui = GUI()
 
+# Add all of the gui elements
 gui.add_element(Switch(
-    ["Team Blue", "Team Red"],
+    ["Team Red", "Team Blue"],
     0,
     0,
     120,
     40,
-    [Color.BLUE, Color.RED],
+    [Color.RED, Color.BLUE],
     [r.set_team] * 2,
-    ["blue", "red"]
+    ["red", "blue"],
 ))
 
 def change_drone_mode(value):
+
     r.set_target_state({
         "drone_mode" : value
     })
@@ -2057,6 +1981,29 @@ gui.add_element(Switch(
     [change_drone_mode] * 2,
     (True, False),
 ))
+
+gui.add_element(Switch(
+    ["Auto Intake", "Manual Intake"],
+    120,
+    120,
+    120,
+    40,
+    [Color(0x88AA88), Color(0xAA8888)],
+    [r.set_target_state] * 2,
+    [{"auto_intake" : True}, {"auto_intake" : False}],
+))
+
+gui.add_element(Switch(
+    ["Auto Roller", "Manual Roller"],
+    120,
+    160,
+    120,
+    40,
+    [Color(0x88AA88), Color(0xAA8888)],
+    [r.set_target_state] * 2,
+    [{"auto_roller" : True}, {"auto_roller" : False}],
+))
+
 
 # Create a grid that increments the flywheel speed
 gui.add_element(Button(
@@ -2100,6 +2047,17 @@ gui.add_element(Button(
     reset_robot_theta
 ))
 
+gui.add_element(Switch(
+    ["GPS", "No GPS"],
+    120,
+    160,
+    120,
+    40,
+    [Color(0x88AA88), Color(0xAA8888)],
+    [r.set_target_state] * 2,
+    [{"use_gps" : True}, {"use_gps" : False}]
+))
+
 # Append the current state to a path
 gui.add_element(Button(
     "Add to Path",
@@ -2121,7 +2079,6 @@ gui.add_element(Button(
     (0xAAAAAA),
     lambda: print(repr(r.path))
 ))
-
 
 # IMPORTANT NUMBERS
 gui.add_element(Text(
@@ -2174,23 +2131,23 @@ gui.add_element(Text(
 gui.add_element(Text(
     "",
     360,
-    0,
+    40,
     120,
     40,
     Color.BLACK,
-    lambda: f("temp:", flywheel_motor_1.temperature(), flywheel_motor_2.temperature())
+    lambda: f("T", round(flywheel_motor_1.temperature()), round(flywheel_motor_2.temperature()))
 ))
 
-######### GUI ######### GUI ######### GUI ######### GUI ######### GUI ######### GUI #########
 
 init()
 r.init()
 
-rd = RobotDoctor()
+# rd = RobotDoctor()
 # rd.init()
-# rd.run_tests(all_tests)
+# rd.run_tests()
 
-r.using_gps = False
+# 30 millisecond wait for the gyroscope to initialize
+wait(30, MSEC)
 
 gui.render()
 
@@ -2198,7 +2155,20 @@ gui.render()
 driver_control()
 # competition = Competition(driver_control, autonomous)
 
-##! PRIORITY
+# Wisconsin trip todo:
+# TODO: Make autonomous selector gui
+# TODO: Document and clean up code
+# TODO: Checklist on brain?
+
+
+# TODO: Make autonomous screen and show screen
+# TODO: Test roller optical and change threshold
+
+
+# ! PRIORITY
+# TODO: Make the flyhwheel PID controller not disgusting
+# TODO: Use a limit switch to know when the indexer is far back enough to launch another disc
+# TODO: Test out hold vs. break for driving
 # TODO: Make it so that the robot movement is based off of the gps for now AND THEN add it using the encoders (kinda backwards, ik)
 # TODO: Figure out if serial communication is 2 ways, if we can use input(), and then if we can run that command with os.sys()
 # TODO: Instead of making the new target position based off of the current state, make it based off of the target state
