@@ -27,8 +27,8 @@ left_motor_b = Motor(Ports.PORT9, GearSetting.RATIO_18_1, False)
 right_motor_a = Motor(Ports.PORT1, GearSetting.RATIO_18_1, True)
 right_motor_b = Motor(Ports.PORT2, GearSetting.RATIO_18_1, True)
 
-flywheel_motor_1 = Motor(Ports.PORT11, GearSetting.RATIO_6_1, False)
-flywheel_motor_2 = Motor(Ports.PORT20, GearSetting.RATIO_6_1, True)
+flywheel_motor_1 = Motor(Ports.PORT20, GearSetting.RATIO_6_1, False)
+flywheel_motor_2 = Motor(Ports.PORT11, GearSetting.RATIO_6_1, True)
 
 indexer_limit_switch = DigitalIn(brain.three_wire_port.c)
 
@@ -734,15 +734,16 @@ class Robot:
 
     flywheel_speed_levels = [
         0,
-        30,
-        32,
-        34,
-        36,
-        38,
-        40,
-        42,
-        44,
-        46,
+        round(35.00000001),
+        round(37.333333344),
+        round(39.666666678000006),
+        round(42.000000012),
+        round(44.333333346),
+        round(46.666666680000006),
+        round(49.000000014),
+        round(51.333333348000004),
+        round(53.666666682000006),
+        100
     ]
     
     # State dictionary will hold ALL information about the robot
@@ -1544,7 +1545,7 @@ class Robot:
         # MAX_FLYWHEEL_SPEED = 100 / 60
         MAX_VOLTAGE = 10 # I don't think this is the true maximum voltage btw
         
-        speed_alpha = 1
+        speed_alpha = 0.5
         self.flywheel_1_avg_speed = flywheel_motor_1.velocity(PERCENT) * speed_alpha + self.flywheel_1_avg_speed * (1 - speed_alpha)
         self.flywheel_2_avg_speed = flywheel_motor_2.velocity(PERCENT) * speed_alpha + self.flywheel_2_avg_speed * (1 - speed_alpha)
 
@@ -1573,36 +1574,37 @@ class Robot:
             self.flywheel_motor_1_average_output = 0
             self.flywheel_motor_2_average_output = 0
 
-        kP = 0.01
-        kD = 0.15
+        kP = 0.1
+        kI = 0.002
+        kD = 0.04
 
-        proportional_term_flywheel_1 = kP * (self.flywheel_speed - self.flywheel_1_avg_speed)
+        proportional_term_flywheel_1 = kP * (self.flywheel_speed - flywheel_motor_1.velocity(PERCENT))
         derivative_term_flywheel_1 = kD * (self.flywheel_1_avg_speed - self.previous_flywheel_1_avg_speed)
         # error_helper_term_flywheel_1 = 0.01 * ((self.flywheel_speed - self.flywheel_1_avg_speed) - self.previous_flywheel_1_error) 
 
-        derivative_term_flywheel_1 = max(derivative_term_flywheel_1, -0.3)
-        derivative_term_flywheel_1 = min(derivative_term_flywheel_1, 0.3)
+        # derivative_term_flywheel_1 = max(derivative_term_flywheel_1, -0.5)
+        # derivative_term_flywheel_1 = min(derivative_term_flywheel_1, 0.5)
 
         # derivative_term_flywheel_1 = 0
 
-        proportional_term_flywheel_2 = kP * (self.flywheel_speed - self.flywheel_2_avg_speed)
+        proportional_term_flywheel_2 = kP * (self.flywheel_speed - flywheel_motor_2.velocity(PERCENT))
         derivative_term_flywheel_2 = kD * (self.flywheel_2_avg_speed - self.previous_flywheel_2_avg_speed)
         # error_helper_term_flywheel_2 = 0.01 * ((self.flywheel_speed - self.flywheel_1_avg_speed) - self.previous_flywheel_1_error) 
 
-        derivative_term_flywheel_2 = max(derivative_term_flywheel_2, -0.3)
-        derivative_term_flywheel_2 = min(derivative_term_flywheel_2, 0.3)
+        # derivative_term_flywheel_2 = max(derivative_term_flywheel_2, -0.5)
+        # derivative_term_flywheel_2 = min(derivative_term_flywheel_2, 0.5)
 
         # derivative_term_flywheel_2 = 0
 
-        self.flywheel_1_voltage_factor += proportional_term_flywheel_1 - derivative_term_flywheel_1 + (self.flywheel_speed - self.previous_flywheel_speed) * 0.1
-        self.flywheel_2_voltage_factor += proportional_term_flywheel_2 - derivative_term_flywheel_2 + (self.flywheel_speed - self.previous_flywheel_speed) * 0.1
+        self.flywheel_1_voltage_factor += kI * (self.flywheel_speed - self.flywheel_1_avg_speed) - derivative_term_flywheel_1 * 2 + (self.flywheel_speed - self.previous_flywheel_speed) * 0.075
+        self.flywheel_2_voltage_factor += kI * (self.flywheel_speed - self.flywheel_2_avg_speed) - derivative_term_flywheel_2 * 2 + (self.flywheel_speed - self.previous_flywheel_speed) * 0.075
 
         # Clamp the voltage so we don't send more than the maximum I stated 
         self.flywheel_1_voltage_factor = clamp(self.flywheel_1_voltage_factor, MAX_VOLTAGE, -MAX_VOLTAGE)
         self.flywheel_2_voltage_factor = clamp(self.flywheel_2_voltage_factor, MAX_VOLTAGE, -MAX_VOLTAGE)
 
-        flywheel_motor_1.spin(FORWARD, self.flywheel_1_voltage_factor + proportional_term_flywheel_1 * 0, VOLT)
-        flywheel_motor_2.spin(FORWARD, self.flywheel_2_voltage_factor + proportional_term_flywheel_2 * 0, VOLT)
+        flywheel_motor_1.spin(FORWARD, self.flywheel_1_voltage_factor + proportional_term_flywheel_1 * 0 - derivative_term_flywheel_1, VOLT)
+        flywheel_motor_2.spin(FORWARD, self.flywheel_2_voltage_factor + proportional_term_flywheel_2 * 0 - derivative_term_flywheel_2, VOLT)
 
         self.flywheel_motor_1_error = (self.flywheel_1_avg_speed - self.previous_flywheel_1_avg_speed)
         self.flywheel_motor_2_error = (self.flywheel_2_avg_speed - self.previous_flywheel_2_avg_speed)
@@ -1612,6 +1614,12 @@ class Robot:
         self.previous_flywheel_2_avg_speed = self.flywheel_2_avg_speed
 
         self.previous_flywheel_speed = float(self.flywheel_speed)
+
+        self.derivative_term_flywheel_1 = derivative_term_flywheel_1
+        self.derivative_term_flywheel_2 = derivative_term_flywheel_2
+
+        self.proportional_term_flywheel_1 = proportional_term_flywheel_1
+        self.proportional_term_flywheel_2 = proportional_term_flywheel_2
 
     
     def index_disc(self):
@@ -1938,13 +1946,12 @@ def driver_control():
                 })
         
         # Timer to print things out to the terminal every x seconds
-        if (timer.time() > 0.02 * 1000):
+        if (timer.time() > 0.1 * 1000):
             
             # Print the flywheel torque
-            # print("flywheel_motor_torque", flywheel_motor_1.torque(), flywheel_motor_2.torque(), "intake", roller_and_intake_motor_1.torque(), roller_and_intake_motor_2.torque())
+            print(r.flywheel_speed, flywheel_motor_1.velocity(PERCENT), r.proportional_term_flywheel_1, r.flywheel_1_voltage_factor, r.derivative_term_flywheel_1)
             controller_1.screen.clear_row(3)
             controller_1.screen.print(f("FLY:", r.flywheel_speed, "ang:", round(r.theta)))
-            print("still in driver controlled....")
             timer.reset()
 
         if controller_1.buttonUp.pressing():
@@ -1967,7 +1974,6 @@ def driver_control():
                 temp_copy.append(r.flywheel_speed)
             temp_copy.sort()
             new_flywheel_speed = temp_copy[min(temp_copy.index(r.flywheel_speed)+1,len(temp_copy)-1)]
-            print("Setting flywheel speed to", new_flywheel_speed, temp_copy)
             r.set_target_state({
                 # "flywheel_speed" : min(r.flywheel_speed + 2, 100)
                 "flywheel_speed" : new_flywheel_speed
@@ -1979,7 +1985,6 @@ def driver_control():
                 temp_copy.append(r.flywheel_speed)
             temp_copy.sort()
             new_flywheel_speed = temp_copy[max(temp_copy.index(r.flywheel_speed)-1,0)]
-            print("Setting flywheel speed to", new_flywheel_speed, temp_copy)
             r.set_target_state({                
                 # "flywheel_speed": max(r.flywheel_speed - 2, 0)
                 "flywheel_speed": new_flywheel_speed
@@ -2119,6 +2124,10 @@ gui.add_page([
     Text("", 240, 80, 120, 40, Color.BLACK,lambda: "y: {:.2f}".format(r.y_pos),), 
     Text("", 240, 120, 120, 40, Color.BLACK, lambda: f("θ:", str(r.theta).split(".")[0]),), 
     Button("Go To Debug", 360, 200, 120, 40, (0xAAAAAA), lambda: gui.set_page(1)),
+
+    # Auto Selector
+    Switch(["2-Square", "3-Square"], 0, 120, 120, 40, [0x33FF33, 0x33CC33], lambda auto_mode: r.set_autonomous_procedure(auto_mode), [two_square_auto, three_square_auto]),
+    Button("Run auto", 0, 160, 120, 40, (0xAAAAAA), lambda: r.run_autonomous()),
 ])
 
 gui.add_page([
@@ -2142,8 +2151,6 @@ gui.add_page([
     Text("", 240, 80, 120, 40, Color.BLACK,lambda: "y: {:.2f}".format(r.y_pos),), 
     Text("", 240, 120, 120, 40, Color.BLACK, lambda: f("θ:", str(r.theta).split(".")[0]),), 
     Text("", 360, 40, 120, 40, Color.BLACK, lambda: f("T", round(flywheel_motor_1.temperature()), round(flywheel_motor_2.temperature()))),
-    Switch(["2-Square", "3-Square"], 0, 120, 120, 40, [0x33FF33, 0x33CC33], lambda auto_mode: r.set_autonomous_procedure(auto_mode), [two_square_auto, three_square_auto]),
-    Button("Run auto", 0, 160, 120, 40, (0xAAAAAA), lambda: r.run_autonomous()),
     Button("Go To Comp", 360, 200, 120, 40, (0xAAAAAA), lambda: gui.set_page(0)),
     Text("", 120, 40, 120, 40, Color.BLACK, lambda: f(round(left_motor_a.temperature()), round(left_motor_b.temperature()), round(right_motor_a.temperature()), round(right_motor_b.temperature()))),
 
@@ -2163,8 +2170,6 @@ gui.pages[2].extend(
 )
 gui.set_page(2)
 
-print(gui.page_num)
-print(repr(gui.pages))
 
 init()
 r.init()
@@ -2186,8 +2191,6 @@ driver_control()
 # Wisconsin trip todo:
 # TODO: Make autonomous screen and show screen
 # TODO: Test roller optical and change threshold
-
-# TODO: Pneumatic cylinder work better
 
 # ! PRIORITY
 # TODO: Make the flyhwheel PID controller not disgusting
