@@ -1030,6 +1030,9 @@ class Robot:
         '''
         if self.target_state["launch_expansion"]:
             expansion.open()
+        else:
+            expansion.close()
+        
     
     def estimate_state(self):
         '''
@@ -1138,9 +1141,9 @@ class Robot:
                 self.intake_speed = 0
                 self["disc_in_intake"] = False
         
-        if self["roller_state"] == "none":
-            roller_and_intake_motor_1.spin(REVERSE, self.intake_speed, VelocityUnits.PERCENT)
-            roller_and_intake_motor_2.spin(FORWARD, self.intake_speed, VelocityUnits.PERCENT)
+        # if self["roller_state"] == "none":
+        roller_and_intake_motor_1.spin(REVERSE, self.intake_speed, VelocityUnits.PERCENT)
+        roller_and_intake_motor_2.spin(FORWARD, self.intake_speed, VelocityUnits.PERCENT)
         
     def roller_update(self):
         if self["auto_roller"]:
@@ -1341,10 +1344,10 @@ class Robot:
 
         '''
         # Update loop
+        print("I am", self)
         self.update()
         self.autonomous_timer.reset()
         self.running_autonomous = True
-        
         for step in self.autonomous_procedure:
             target_state = {}
             if "setX" in step:
@@ -1369,6 +1372,7 @@ class Robot:
 
             if "wait" in step.keys():
                 print("Waiting for", step["wait"], "seconds")
+                print("intake is", r.intake_speed)
                 wait(step["wait"], SECONDS)
 
             # While we haven't reached the target state then just wait
@@ -1898,12 +1902,13 @@ def driver_control():
     }
 
     gui.set_page(0)
-
     while True:
 
             
         if r.running_autonomous:
             continue
+
+        # print("we are running auto right now")
 
         # Render and update the gui before everything else
     
@@ -1919,8 +1924,8 @@ def driver_control():
                 "override_velocity_x" : new_x,
                 "override_velocity_y" : new_y,
                 "theta" : r.theta + new_theta,
-                "slow_mode" : controller_1.buttonL1.pressing(),
-                "intake_speed" : controller_1.buttonL1.pressing() * 100,
+                # "slow_mode" : controller_1.buttonL1.pressing(),
+                "intake_speed" : controller_1.buttonL1.pressing() * 100 + controller_2.buttonL1.pressing() * 100 - controller_2.buttonR1.pressing() * 100,
             }
         )
 
@@ -1951,6 +1956,9 @@ def driver_control():
                 r.set_target_state({
                     "theta" : 0,
                 })
+        
+        if controller_1.buttonDown.pressing():
+            reset_robot_theta()
 
         # If only the b button is being pressed then rotate the robot to 180 deg,
         # if the b and a button is pressed rotate to 45, if b and y is presed
@@ -1969,6 +1977,53 @@ def driver_control():
                     "theta" : 180,
                 })
         
+        if controller_2.buttonA.pressing():
+            r.set_target_state({
+                "theta" : 90,
+            })
+        
+        if controller_2.buttonY.pressing():
+            r.set_target_state({
+                "theta" : -90,
+            })
+
+        # If only the x button is being pressed then rotate the robot to 0 deg, 
+        # if the x and a button is pressed, rotate to 45, if a and y pressed
+        # rotate to -45 deg
+        if controller_2.buttonX.pressing():
+            if controller_2.buttonA.pressing():
+                r.set_target_state({
+                    "theta" : 45,
+                })
+            elif controller_2.buttonY.pressing():
+                r.set_target_state({
+                    "theta" : -45,
+                })
+            else:
+                r.set_target_state({
+                    "theta" : 0,
+                })
+        
+        if controller_2.buttonDown.pressing():
+            reset_robot_theta()
+
+        # If only the b button is being pressed then rotate the robot to 180 deg,
+        # if the b and a button is pressed rotate to 45, if b and y is presed
+        # rotate to -135 deg
+        if controller_2.buttonB.pressing():
+            if controller_2.buttonA.pressing():
+                r.set_target_state({
+                    "theta" : 135,
+                })
+            elif controller_2.buttonY.pressing():
+                r.set_target_state({
+                    "theta" : -135,
+                })
+            else:
+                r.set_target_state({
+                    "theta" : 180,
+                })
+
         # Timer to print things out to the terminal every x seconds
         if (timer.time() > 0.1 * 1000):
             
@@ -1976,15 +2031,31 @@ def driver_control():
             # print(r.flywheel_speed, flywheel_motor_1.velocity(PERCENT), r.proportional_term_flywheel_1, r.flywheel_1_voltage_factor, r.derivative_term_flywheel_1)
             controller_1.screen.clear_row(3)
             controller_1.screen.print(f("FLY:", r.flywheel_speed, "ang:", round(r.theta)))
+
+            controller_2.screen.clear_row(3)
+            controller_2.screen.print(f("You are controller 2!"))
             timer.reset()
 
-        if controller_1.buttonUp.pressing():
+        if controller_1.buttonUp.pressing() and not previous_controller_states["buttonUp"]:
             r.set_target_state({
                 "launch_expansion" : True
             })
         elif controller_1.buttonDown.pressing():
+            r.set_target_state({
+                "launch_expansion" : False
+            })
             expansion.close()
         
+        if controller_2.buttonUp.pressing():
+            r.set_target_state({
+                "launch_expansion" : True
+            })
+        elif controller_2.buttonDown.pressing():
+            r.set_target_state({
+                "launch_expansion" : False
+            })
+            expansion.close()
+
         # Shoot a disc if either of these are pressing
         if controller_1.buttonR1.pressing():
             r.set_target_state({
@@ -2062,32 +2133,127 @@ match_auto_three_squares = [
         "auto_intake" : False,
         "auto_roller" : False,
         "drone_mode" : True,
-        # "intake_speed" : 100,
-        "wait" : 1,
+
+        # POSITIVE INTAKE SPEED IS BLUE, NEGATIVE IS RED
+        "intake_speed" : -35,
+        "wait" : 1.45,
         "override_velocity_y" : -20,
         "message" : "Doing rollers..."
     },
     {
-        "wait" : 0.1,
         "override_velocity_y" : 10,
+        "wait" : 1
     },
-    {
-        "override_velocity_x" : 50,
-        "override_velocity_y" : 50,
-        "theta" : 0,
-        "wait" : 5,
-        "message" : "moving towards the center to shoot"
-    },
-    {
-        "override_velocity_x" : 0,
+    {   
+        "theta" : 95, 
         "override_velocity_y" : 0,
-        # "flywheel_speed" : 40,
-        "theta" : -45,
-        "wait" : 2
+        "override_velocity_x" : 0,
+        "wait" : 2,
+        "flywheel_speed" : 34
     },
     {
-        "shoot_disc" : 2,
+        "shoot_disc" : 3,
+    },
+    {
+        "override_velocity_y" : 10,
+        "override_velocity_x" : -10,
+        "theta" : 50,
+        "wait" : 2,
+
+    },
+    {
+        "override_velocity_y" : 0,
+        "override_velocity_x" : 0,
+
+        "launch_expansion" : True,
+        "wait" : 60
+    },
+    {
+        "wait" : 1000
     }
+    # {
+    #     "intake_speed" : 0,
+    #     "wait" : 0.5,
+    #     "override_velocity_y" : 30,
+    #     "override_velocity_x" : 0,
+    # },
+    # {
+    #     "theta" : 90,
+    #     "wait" : 1,
+    #     "override_velocity_y" : 0,
+    #     "message" : "Turning 90 degrees..."
+    # },
+]
+
+match_auto_two_squares = [
+    {
+        # Set the target x, y, and theta positions to None
+        "x_pos" : None,
+        "y_pos" : None,
+        "theta" : None,
+        "auto_intake" : False,
+        "auto_roller" : False,
+        "drone_mode" : True,
+
+        # POSITIVE INTAKE SPEED IS BLUE, NEGATIVE IS RED
+        "intake_speed" : -40,
+        "wait" : 1.0,
+        "message" : "Doing rollers..."
+    },
+    {
+        "override_velocity_x": 20,
+        "override_velocity_y": 0,
+        "wait" : 2.2,
+    },
+    {
+        "override_velocity_x": 0,
+        "override_velocity_y": -20,
+        "wait" : 4.05,
+    },
+    {   
+        "override_velocity_y" : 10,
+        "wait" : 1,
+    },
+    {
+        "override_velocity_y" : 0,
+    },
+    {
+        "theta" : -94,
+        "flywheel_speed" : 35,
+        "wait" : 2,
+    },
+    {
+        "shoot_disc" : 3,
+    },
+    # {
+    #     "theta" : 0,
+    # }
+    # {
+    #     "override_velocity_y" : 10,
+    #     "wait" : 1
+    # },
+    # {   
+    #     "theta" : 0, 
+    #     "override_velocity_y" : 0,
+    #     "override_velocity_x" : 0,
+    #     "wait" : 2,
+    #     "flywheel_speed" : 34
+    # },
+    # {
+    #     "shoot_disc" : 3,
+    # },
+    # {
+    #     "intake_speed" : 0,
+    #     "wait" : 0.5,
+    #     "override_velocity_y" : 30,
+    #     "override_velocity_x" : 0,
+    # },
+    # {
+    #     "theta" : 90,
+    #     "wait" : 1,
+    #     "override_velocity_y" : 0,
+    #     "message" : "Turning 90 degrees..."
+    # },
 ]
 
 skills_auto = [
@@ -2097,7 +2263,7 @@ skills_auto = [
         "y_pos" : None,
         "theta" : None,
         "auto_intake" : False,
-        "auto_roller" : False,
+        "auto_roller" : True,
         "drone_mode" : True,
         # "intake_speed" : 100,
         "wait" : 1,
@@ -2114,6 +2280,7 @@ skills_auto = [
         "wait" : 1,
         "override_velocity_y" : 0,
         "message" : "Turning 90 degrees..."
+            
     },
     {
         "override_velocity_x" : -50,
@@ -2142,6 +2309,7 @@ skills_auto = [
     },
     {
         "message" : "expanding",
+        "launch_expansion" : True,
         "override_velocity_x" : -20,
         "override_velocity_y" : -20,
         "wait" : 1.5,
@@ -2237,7 +2405,7 @@ gui.add_page([
     Button("Go To Debug", 360, 200, 120, 40, (0xAAAAAA), lambda: gui.set_page(1)),
 
     # Auto Selector
-    Switch(["3-Square", "SKILLS", "ShootDiscs", "Manual"], 0, 120, 120, 40, [0x33FF33, 0x33CC33, 0x33AA33, 0x339933], lambda auto_mode: r.set_autonomous_procedure(auto_mode), [match_auto_three_squares, skills_auto, skills_auto_w_expansion, shoot_discs_auto_program]),
+    Switch(["3-Square", "SKILLS", "ShootDiscs", "Manual", "2-Square"], 0, 120, 120, 40, [0x33FF33, 0x33CC33, 0x33AA33, 0x339933, 0x337733], lambda auto_mode: r.set_autonomous_procedure(auto_mode), [match_auto_three_squares, skills_auto, skills_auto_w_expansion, shoot_discs_auto_program, match_auto_two_squares]),
     Button("Run auto", 0, 160, 120, 40, (0xAAAAAA), lambda: r.run_autonomous()),
 ])
 
@@ -2294,13 +2462,22 @@ r.init()
 # 30 millisecond wait for the gyroscope to initialize
 wait(30, MSEC)
 
+
 # wait(4, SECONDS)
 
+
 # r.set_autonomous_procedure(skills_auto)
+
+r.set_autonomous_procedure(match_auto_two_squares)
+r.set_autonomous_procedure(match_auto_two_squares)
 # r.run_autonomous()
 
-driver_control()
-# competition = Competition(driver_control, autonomous)
+def nothing():
+    return
+
+# driver_control()
+# competition = Competition(driver_control, r.run_autonomous)
+competition = Competition(driver_control, r.run_autonomous)
 
 # ! PRIORITY
 # TODO: Test out hold vs. break for driving
