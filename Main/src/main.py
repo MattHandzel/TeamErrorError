@@ -34,8 +34,8 @@ indexer_limit_switch = DigitalIn(brain.three_wire_port.c)
 
 inertial = Inertial(Ports.PORT8)
 
-roller_and_intake_motor_1 = Motor(Ports.PORT4, GearSetting.RATIO_18_1, False)
-roller_and_intake_motor_2 = Motor(Ports.PORT5, GearSetting.RATIO_18_1, False)
+roller_and_intake_motor_1 = Motor(Ports.PORT4, GearSetting.RATIO_36_1, False)
+roller_and_intake_motor_2 = Motor(Ports.PORT5, GearSetting.RATIO_36_1, False)
 roller_and_intake_motor = MotorGroup(
     roller_and_intake_motor_1, roller_and_intake_motor_2)
 
@@ -775,6 +775,9 @@ class Robot:
         "roller_state" : "none",
         "auto_roller" : False,
         "roller_speed" : 0,
+        "roller_spin_for" : 0,
+        "roller_and_intake_motor_1_done" : True,
+        "roller_and_intake_motor_2_done" : True, 
         
         # Intake
         "auto_intake" : False,
@@ -1125,6 +1128,27 @@ class Robot:
         else:
             self.state["disc_shot"] = False
 
+
+
+        # If the roller was sent to false BEFORE
+        self["roller_and_intake_motor_1_done"] = roller_and_intake_motor_1.is_done()
+        self["roller_and_intake_motor_2_done"] = roller_and_intake_motor_2.is_done()
+        
+        if self["roller_and_intake_motor_1_done"] and self["roller_and_intake_motor_2_done"] and not self.previous_state["roller_and_intake_motor_1_done"] and not self.previous_state["roller_and_intake_motor_2_done"]:
+            print("setting roller spin for to 0")
+
+            print("values", roller_and_intake_motor_1.is_done(), roller_and_intake_motor_2.is_done())
+            
+            self["roller_spin_for"] = 0
+        
+        # if self.previous_state["roller_is_done"] == True and self["roller_is_done"] == False:
+        #     self["roller_is_done"] = (roller_and_intake_motor_1.is_done() and roller_and_intake_motor_2.is_done())
+
+        # if not self.previous_state["roller_is_done"] and self["roller_is_done"]:
+        #     # setting the roller_spin_for to zero
+        #     print("setting toller-spin_for to zero")
+        #     self["roller_spin_for"] = 0
+
     
     def intake_update(self):
         # If we have auto_intake enbaled then use the camera and try to look for the disc signatures
@@ -1141,9 +1165,12 @@ class Robot:
                 self.intake_speed = 0
                 self["disc_in_intake"] = False
         
-        # if self["roller_state"] == "none":
-        roller_and_intake_motor_1.spin(REVERSE, self.intake_speed, VelocityUnits.PERCENT)
-        roller_and_intake_motor_2.spin(FORWARD, self.intake_speed, VelocityUnits.PERCENT)
+        if self["roller_spin_for"] == 0 and self["roller_and_intake_motor_1_done"] and self["roller_and_intake_motor_2_done"]:
+            roller_and_intake_motor_1.spin(REVERSE, self.intake_speed, VelocityUnits.PERCENT)
+            roller_and_intake_motor_2.spin(FORWARD, self.intake_speed, VelocityUnits.PERCENT)
+            
+        else:
+            print("intake,", roller_and_intake_motor_1.is_done())
         
     def roller_update(self):
         if self["auto_roller"]:
@@ -1171,11 +1198,30 @@ class Robot:
                     controller_1.rumble("-")
                     if self.previous_state["roller_state"] != self["roller_state"]:
                         self["roller_speed"] = -50
-                        
-        # If the roller sees the red or blue roller then spin the roller/intake system
-        if self["roller_state"] != "none":
-            roller_and_intake_motor_1.spin(REVERSE, self["roller_speed"], VelocityUnits.PERCENT)
-            roller_and_intake_motor_2.spin(FORWARD, self["roller_speed"], VelocityUnits.PERCENT)
+        
+            # If the roller sees the red or blue roller then spin the roller/intake system
+            if self["roller_state"] != "none":
+                roller_and_intake_motor_1.spin(REVERSE, self["roller_speed"], VelocityUnits.PERCENT)
+                roller_and_intake_motor_2.spin(FORWARD, self["roller_speed"], VelocityUnits.PERCENT)
+
+        if self["roller_spin_for"] != 0 and self["roller_and_intake_motor_1_done"] and self["roller_and_intake_motor_2_done"]:
+            
+            print("SETTING MOTOR TO SPIN FOR ", self["roller_spin_for"], "deg")
+            roller_and_intake_motor_1.spin_for(REVERSE, self["roller_spin_for"], DEGREES, False)
+            roller_and_intake_motor_2.spin_for(FORWARD, self["roller_spin_for"], DEGREES, False)
+
+            roller_and_intake_motor_1.set_velocity(-100)
+            roller_and_intake_motor_2.set_velocity(100)
+
+            self["roller_and_intake_motor_1_done"] = False
+            self["roller_and_intake_motor_2_done"] = False
+
+            self.previous_state["roller_and_intake_motor_1_done"] = True
+            self.previous_state["roller_and_intake_motor_2_done"] = True
+
+
+            print("done status", roller_and_intake_motor_1.is_done(), roller_and_intake_motor_2.is_done())
+
 
 ##### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ###
     def set_target_state(self, _state):
@@ -1218,6 +1264,9 @@ class Robot:
             self.flywheel_speed = _state["flywheel_speed"]
         if "shoot_disc" in _state:
             self.shoot_disc = _state["shoot_disc"]
+        if "roller_spin_for" in _state:
+            self["roller_spin_for"] = _state["roller_spin_for"]
+
 
     def __setitem__(self, key, value):
         '''
@@ -1343,8 +1392,10 @@ class Robot:
             other params - any other param that is passed that is a key in the robot's state sets the target state of the robot to that value
 
         '''
+        if self.running_autonomous:
+            # In case we accidentally run 2 autos at the same time lmmao
+            return
         # Update loop
-        print("I am", self)
         self.update()
         self.autonomous_timer.reset()
         self.running_autonomous = True
@@ -1368,17 +1419,15 @@ class Robot:
                 target_state["y_pos"] = step["y"]
             
             self.set_target_state(target_state)
-            print("Target state of robot is", self.target_state)
 
             if "wait" in step.keys():
                 print("Waiting for", step["wait"], "seconds")
-                print("intake is", r.intake_speed)
                 wait(step["wait"], SECONDS)
 
             # While we haven't reached the target state then just wait
             while not self.target_reached:
                 wait(0.1, SECONDS)
-
+        print("DONE WITH AUTONOMOUS")
         # After the autonomous mode is over then set the target state to the robot's initial state (so we don't move and turn everything off)
         self.set_target_state(self.initial_state)
         self.running_autonomous = False
@@ -2028,6 +2077,9 @@ def driver_control():
         if (timer.time() > 0.1 * 1000):
             
             # Print the flywheel torque
+
+            # print(r["roller_spin_for"], r["roller_is_done"])
+
             # print(r.flywheel_speed, flywheel_motor_1.velocity(PERCENT), r.proportional_term_flywheel_1, r.flywheel_1_voltage_factor, r.derivative_term_flywheel_1)
             controller_1.screen.clear_row(3)
             controller_1.screen.print(f("FLY:", r.flywheel_speed, "ang:", round(r.theta)))
@@ -2256,6 +2308,33 @@ match_auto_two_squares = [
     # },
 ]
 
+auto_test = [
+    {
+        "x_pos" : None,
+        "y_pos" : None,
+        "theta" : None,
+        "auto_roller" : False,
+        "auto_intake" : False,
+        "roller_spin_for" : 0,
+        "message" : "init",
+    },
+    {
+        "message" : "spinning",
+        "wait" : 5,
+        "roller_spin_for" : 360,
+    },
+    {
+        "message" : "waiting",
+        "wait" : 2,
+        "intake_speed" : 0,
+    },
+    {
+        "message" : "spinnning intake",
+        "wait" : 2,
+        "intake_speed" : 50
+    }
+]
+
 skills_auto = [
     {
         # Set the target x, y, and theta positions to None
@@ -2298,22 +2377,22 @@ skills_auto = [
         "wait" : 0.5,
     },
     {
-        "theta" : 270,
+        "theta" : 270 - 45,
         "wait" : 1.5,
     },
     {
         "message" : "moving towards other rollers",
-        "override_velocity_x" : 50,
-        "override_velocity_y" : 50,
-        "wait" : 15
+        "override_velocity_x" : 100,
+        "override_velocity_y" : 100,
+        "wait" : 40  
     },
-    {
-        "message" : "expanding",
-        "launch_expansion" : True,
-        "override_velocity_x" : -20,
-        "override_velocity_y" : -20,
-        "wait" : 1.5,
-    }
+    # {
+    #     "message" : "expanding",  
+    #     "launch_expansion" : True,
+    #     "override_velocity_x" : -20,
+    #     "override_velocity_y" : -20,
+    #     "wait" : 1.5,
+    # }
     # {
     #     "wait" : 5,
     #     "message" : "waiting"
@@ -2405,7 +2484,7 @@ gui.add_page([
     Button("Go To Debug", 360, 200, 120, 40, (0xAAAAAA), lambda: gui.set_page(1)),
 
     # Auto Selector
-    Switch(["3-Square", "SKILLS", "ShootDiscs", "Manual", "2-Square"], 0, 120, 120, 40, [0x33FF33, 0x33CC33, 0x33AA33, 0x339933, 0x337733], lambda auto_mode: r.set_autonomous_procedure(auto_mode), [match_auto_three_squares, skills_auto, skills_auto_w_expansion, shoot_discs_auto_program, match_auto_two_squares]),
+    Switch(["3-Square", "SKILLS", "ShootDiscs", "Manual", "2-Square", "Auto"], 0, 120, 120, 40, [0x33FF33, 0x33CC33, 0x33AA33, 0x339933, 0x337733, 0x335533], lambda auto_mode: r.set_autonomous_procedure(auto_mode), [match_auto_three_squares, skills_auto, skills_auto_w_expansion, shoot_discs_auto_program, match_auto_two_squares, auto_test]),
     Button("Run auto", 0, 160, 120, 40, (0xAAAAAA), lambda: r.run_autonomous()),
 ])
 
@@ -2469,17 +2548,37 @@ wait(30, MSEC)
 # r.set_autonomous_procedure(skills_auto)
 
 r.set_autonomous_procedure(match_auto_two_squares)
-r.set_autonomous_procedure(match_auto_two_squares)
 # r.run_autonomous()
 
 def nothing():
     return
 
-# driver_control()
+# while True:
+#     roller_and_intake_motor_1.spin(REVERSE, 100)
+#     roller_and_intake_motor_2.spin(FORWARD, -100)
+
+#     roller_and_intake_motor_1.set_velocity(100)
+#     roller_and_intake_motor_2.set_velocity(-100)
+
+
+#     t = Timer()
+#     t.reset()
+    
+#     while t.value() < 1000:
+#         print(roller_and_intake_motor_1.is_done(), roller_and_intake_motor_2.is_done())
+#         wait(0.01, SECONDS)
+
+#     wait(10, SECONDS)
+
+
+driver_control()
 # competition = Competition(driver_control, r.run_autonomous)
-competition = Competition(driver_control, r.run_autonomous)
+# competition = Competition(driver_control, r.run_autonomous)
 
 # ! PRIORITY
+# TODO: Use GPS to automatiically orient the robot to the high goal (and thats it)
+# TODO: Use motor.turn_for for the rollers ()
+
 # TODO: Test out hold vs. break for driving
 # TODO: Make driving not care about turning speed
 
