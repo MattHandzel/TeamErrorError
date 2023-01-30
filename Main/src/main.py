@@ -86,14 +86,9 @@ def init():
     # These wheels are reversed so that they spin ccw instead of cw for forward
     right_motor_b.spin(REVERSE)
 
-    roller_and_intake_motor_1.spin(FORWARD)
-    roller_and_intake_motor_1.set_velocity(0, PERCENT)
-    roller_and_intake_motor_2.spin(REVERSE)
-    roller_and_intake_motor_2.set_velocity(0, PERCENT)
-
     # Set the optical light power
-    roller_optical.set_light_power(100)
-    roller_optical.object_detect_threshold(0)
+    # roller_optical.set_light_power(100)
+    # roller_optical.object_detect_threshold(0)
 
     expansion.close()
 
@@ -113,7 +108,7 @@ def init():
         wait(0.1, SECONDS)
 
     # Rumlbed the control to indicate to the driver (and me) that the robot is ready to run
-    controller_1.rumble("...")
+    # controller_1.rumble("...")
 
 
 class GameObject:
@@ -526,7 +521,8 @@ class GUI:
         for element in self.pages[self.page_num]:
             # Figure out if the finger press was inside the bound-box of an element
             if (x - element.x) > 0 and (x - element.x) < element.w and (y-element.y) > 0 and (y - element.y) < element.h:
-                element()
+                # Run the callback function of the element as a thread (so the rest of the code DOES NOT stop)
+                Thread(element())
         
     self.previous_brain_screen_state = brain.screen.pressing()
   
@@ -694,31 +690,7 @@ class Robot:
     flywheel_motor_1_average_output = 0
     flywheel_motor_2_average_output = 0 
 
-    # PID controllers
-    motor_PID_kP = 10
-    motor_PID_kI = 5
-    motor_PID_kD = 0
-
-    pos_PID_kP = 0.1
-    pos_PID_kI = 0
-    pos_PID_kD = 0
-    x_pos_PID = PID(pos_PID_kP,pos_PID_kI,pos_PID_kD)
-    y_pos_PID = PID(pos_PID_kP,pos_PID_kI,pos_PID_kD)
-
-    rotation_PID_kP = 0.1
-    rotation_PID_kI = 0
-    rotation_PID_kD = 0
-    rotation_PID = PID(rotation_PID_kP,rotation_PID_kI,rotation_PID_kD)
-
-    left_motor_a_PID = PID(motor_PID_kP,motor_PID_kI,motor_PID_kD)
-    right_motor_a_PID = PID(motor_PID_kP,motor_PID_kI,motor_PID_kD)
-    left_motor_b_PID = PID(motor_PID_kP,motor_PID_kI,motor_PID_kD)
-    right_motor_b_PID = PID(motor_PID_kP,motor_PID_kI,motor_PID_kD)
     
-    x_vel_PID = PID(0.1, 0, 0)
-    y_vel_PID = PID(0.1, 0, 0)
-    theta_vel_PID = PID(0.1, 0, 0)
-
     # * MISC
     update_loop_delay = 0.01  # 10 ms
 
@@ -766,7 +738,7 @@ class Robot:
         "theta_vel" : 0,
         "time" : 0,
 
-        # 
+        # override velocities
         "override_velocity_x" : None,
         "override_velocity_y" : None,
         "override_velocity_theta" : None,
@@ -823,6 +795,8 @@ class Robot:
     save_states = False
 
     path = []
+
+    total_updates = 0
 
     def __init__(self):
 
@@ -908,6 +882,7 @@ class Robot:
         # Run all the code needed for the expansion
         self.expansion_update()
 
+        self.total_updates += 1
     
     def position_update(self):
         '''
@@ -994,16 +969,16 @@ class Robot:
 
         # If we aren't moving from a stop to a start or vice versa, decrease acceleration
         if abs(left_motor_a.velocity(PERCENT)) < slow_down_speed_threshold:
-            max_acceleration_left_motor_a = self.max_acceleration * 2
+            max_acceleration_left_motor_a = self.max_acceleration * 0.5
 
         if abs(right_motor_a.velocity(PERCENT)) < slow_down_speed_threshold:
-            max_acceleration_right_motor_a = self.max_acceleration * 2
+            max_acceleration_right_motor_a = self.max_acceleration * 0.5
 
         if abs(left_motor_b.velocity(PERCENT)) < slow_down_speed_threshold:
-            max_acceleration_left_motor_b = self.max_acceleration * 2
+            max_acceleration_left_motor_b = self.max_acceleration * 0.5
 
         if abs(right_motor_b.velocity(PERCENT)) < slow_down_speed_threshold:
-            max_acceleration_right_motor_b = self.max_acceleration * 2
+            max_acceleration_right_motor_b = self.max_acceleration * 0.5
 
         # Okie doki, this line is gonna need some documentation, but first some labels:
         # (self.max_acceleration / self.max_velocity * 100) means the maximum acceleration of our robot IN A PERCENTAGE (i.e. 10 percent per second, 50 percent per second, -10 percent, per second)
@@ -1111,7 +1086,7 @@ class Robot:
         # if ((abs(self.state["x_pos"] - self.target_state["x_pos"]) < self.position_tolerance and abs(self.state["y_pos"] - self.target_state["y_pos"]) < self.position_tolerance) \
         #     or (self.state["override_velocity_y"] != None or self.state["override_velocity_x"] != None)):
             
-        if self.shoot_disc == 0:
+        if self.shoot_disc == 0 and self["roller_and_intake_motor_1_done"] and self["roller_and_intake_motor_2_done"]:
             self.target_reached = True
         
         # Theta offset that is set up the gps 
@@ -1129,16 +1104,12 @@ class Robot:
             self.state["disc_shot"] = False
 
 
-
         # If the roller was sent to false BEFORE
         self["roller_and_intake_motor_1_done"] = roller_and_intake_motor_1.is_done()
         self["roller_and_intake_motor_2_done"] = roller_and_intake_motor_2.is_done()
         
         if self["roller_and_intake_motor_1_done"] and self["roller_and_intake_motor_2_done"] and not self.previous_state["roller_and_intake_motor_1_done"] and not self.previous_state["roller_and_intake_motor_2_done"]:
-            print("setting roller spin for to 0")
-
             print("values", roller_and_intake_motor_1.is_done(), roller_and_intake_motor_2.is_done())
-            
             self["roller_spin_for"] = 0
         
         # if self.previous_state["roller_is_done"] == True and self["roller_is_done"] == False:
@@ -1169,8 +1140,6 @@ class Robot:
             roller_and_intake_motor_1.spin(REVERSE, self.intake_speed, VelocityUnits.PERCENT)
             roller_and_intake_motor_2.spin(FORWARD, self.intake_speed, VelocityUnits.PERCENT)
             
-        else:
-            print("intake,", roller_and_intake_motor_1.is_done())
         
     def roller_update(self):
         if self["auto_roller"]:
@@ -1207,8 +1176,13 @@ class Robot:
         if self["roller_spin_for"] != 0 and self["roller_and_intake_motor_1_done"] and self["roller_and_intake_motor_2_done"]:
             
             print("SETTING MOTOR TO SPIN FOR ", self["roller_spin_for"], "deg")
-            roller_and_intake_motor_1.spin_for(REVERSE, self["roller_spin_for"], DEGREES, False)
-            roller_and_intake_motor_2.spin_for(FORWARD, self["roller_spin_for"], DEGREES, False)
+            roller_and_intake_motor_1.set_velocity(-100)
+            roller_and_intake_motor_2.set_velocity(100)
+            
+            
+            # When we rotate our roller, for every 285 degrees it rotates for, the game field roller will rotate 360 degrees (3'' roller wheels compared to 2.375'' roller)
+            roller_and_intake_motor_1.spin_for(REVERSE, self["roller_spin_for"] * 285.0, DEGREES, False)
+            roller_and_intake_motor_2.spin_for(FORWARD, self["roller_spin_for"] * 285.0, DEGREES, False)
 
             roller_and_intake_motor_1.set_velocity(-100)
             roller_and_intake_motor_2.set_velocity(100)
@@ -1216,11 +1190,11 @@ class Robot:
             self["roller_and_intake_motor_1_done"] = False
             self["roller_and_intake_motor_2_done"] = False
 
-            self.previous_state["roller_and_intake_motor_1_done"] = True
-            self.previous_state["roller_and_intake_motor_2_done"] = True
+            self["roller_spin_for"] = 0
+            # self.previous_state["roller_and_intake_motor_1_done"] = True
+            # self.previous_state["roller_and_intake_motor_2_done"] = True
 
-
-            print("done status", roller_and_intake_motor_1.is_done(), roller_and_intake_motor_2.is_done())
+            # print("done status", roller_and_intake_motor_1.is_done(), roller_and_intake_motor_2.is_done())
 
 
 ##### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ### MISC/UTIL ###
@@ -2078,9 +2052,7 @@ def driver_control():
             
             # Print the flywheel torque
 
-            # print(r["roller_spin_for"], r["roller_is_done"])
-
-            # print(r.flywheel_speed, flywheel_motor_1.velocity(PERCENT), r.proportional_term_flywheel_1, r.flywheel_1_voltage_factor, r.derivative_term_flywheel_1)
+            print(r.flywheel_speed, flywheel_motor_1.velocity(PERCENT), r.proportional_term_flywheel_1, r.flywheel_1_voltage_factor, r.derivative_term_flywheel_1)
             controller_1.screen.clear_row(3)
             controller_1.screen.print(f("FLY:", r.flywheel_speed, "ang:", round(r.theta)))
 
@@ -2163,14 +2135,15 @@ mostyn = [{ 'x' : 0.0, 'y' : 0.0},{ 'x' : -0.63, 'y' : 4.39},{ 'x' : 0.0, 'y' : 
 # revamping_everthing = [{ 'x' : 0.0, 'y' : 0.0},{ 'x' : 0.0, 'y' : 1.88},{ 'x' : -0.63, 'y' : 3.14},{ 'x' : -0.63, 'y' : 4.39},{ 'x' : -0.63, 'y' : 6.27},{ 'x' : -1.25, 'y' : 7.53},{ 'x' : -1.25, 'y' : 10.67},{ 'x' : -1.88, 'y' : 13.8},{ 'x' : -1.88, 'y' : 22.59},{ 'x' : -1.88, 'y' : 28.23},{ 'x' : -2.51, 'y' : 35.76},{ 'x' : -2.51, 'y' : 41.41},{ 'x' : -3.14, 'y' : 47.05},{ 'x' : -2.51, 'y' : 52.07},{ 'x' : -1.88, 'y' : 56.46},{ 'x' : -1.25, 'y' : 60.86},{ 'x' : -0.63, 'y' : 64.62},{ 'x' : 0.0, 'y' : 69.01},{ 'x' : 0.63, 'y' : 72.78},{ 'x' : 0.63, 'y' : 77.79},{ 'x' : 1.88, 'y' : 80.93},{ 'x' : 2.51, 'y' : 82.81},{ 'x' : 3.76, 'y' : 85.32},{ 'x' : 5.65, 'y' : 87.21},{ 'x' : 7.53, 'y' : 90.34},{ 'x' : 9.41, 'y' : 91.6},{ 'x' : 10.67, 'y' : 93.48},{ 'x' : 11.92, 'y' : 94.11},{ 'x' : 13.8, 'y' : 94.73},{ 'x' : 15.06, 'y' : 95.36},{ 'x' : 16.31, 'y' : 95.99},{ 'x' : 17.57, 'y' : 95.99},{ 'x' : 18.82, 'y' : 95.99},{ 'x' : 20.08, 'y' : 95.99},{ 'x' : 21.33, 'y' : 95.36},{ 'x' : 22.59, 'y' : 94.73},{ 'x' : 24.47, 'y' : 94.11},{ 'x' : 25.72, 'y' : 92.85},{ 'x' : 27.6, 'y' : 90.97},{ 'x' : 27.6, 'y' : 89.71},{ 'x' : 28.86, 'y' : 88.46},{ 'x' : 29.49, 'y' : 86.58},{ 'x' : 30.11, 'y' : 84.7},{ 'x' : 30.11, 'y' : 82.19},{ 'x' : 30.74, 'y' : 80.93},{ 'x' : 31.37, 'y' : 78.42},{ 'x' : 31.37, 'y' : 75.29},{ 'x' : 32.0, 'y' : 72.78},{ 'x' : 32.62, 'y' : 69.64},{ 'x' : 32.62, 'y' : 65.87},{ 'x' : 32.62, 'y' : 62.11},{ 'x' : 32.62, 'y' : 57.72},{ 'x' : 32.62, 'y' : 52.7},{ 'x' : 33.25, 'y' : 49.56},{ 'x' : 33.25, 'y' : 47.68},{ 'x' : 33.25, 'y' : 43.92},{ 'x' : 33.25, 'y' : 40.15},{ 'x' : 33.88, 'y' : 34.51},{ 'x' : 33.88, 'y' : 30.74},{ 'x' : 33.88, 'y' : 26.98},{ 'x' : 33.88, 'y' : 24.47},{ 'x' : 33.88, 'y' : 20.7},{ 'x' : 33.88, 'y' : 16.31},{ 'x' : 34.51, 'y' : 12.55},{ 'x' : 34.51, 'y' : 10.04},{ 'x' : 35.13, 'y' : 7.53},{ 'x' : 35.76, 'y' : 5.65},{ 'x' : 36.39, 'y' : 3.76},{ 'x' : 37.64, 'y' : 2.51},{ 'x' : 38.9, 'y' : 0.0},{ 'x' : 39.52, 'y' : -1.88},{ 'x' : 40.78, 'y' : -2.51},{ 'x' : 42.66, 'y' : -3.76},{ 'x' : 44.54, 'y' : -5.02},{ 'x' : 47.05, 'y' : -6.27},{ 'x' : 48.94, 'y' : -6.9},{ 'x' : 53.33, 'y' : -5.65},{ 'x' : 57.09, 'y' : -5.02},{ 'x' : 58.35, 'y' : -3.76},{ 'x' : 59.6, 'y' : -2.51},{ 'x' : 60.86, 'y' : -1.25},{ 'x' : 62.74, 'y' : 1.88},{ 'x' : 63.99, 'y' : 3.76},{ 'x' : 65.25, 'y' : 6.9},{ 'x' : 65.87, 'y' : 10.67},{ 'x' : 67.13, 'y' : 14.43},{ 'x' : 67.13, 'y' : 16.31},{ 'x' : 68.38, 'y' : 20.08},{ 'x' : 68.38, 'y' : 25.1},{ 'x' : 69.01, 'y' : 29.49},{ 'x' : 69.64, 'y' : 34.51},{ 'x' : 70.27, 'y' : 39.52},{ 'x' : 70.89, 'y' : 45.8},{ 'x' : 70.89, 'y' : 48.94},{ 'x' : 71.52, 'y' : 54.58},{ 'x' : 73.4, 'y' : 65.25},{ 'x' : 73.4, 'y' : 73.4},{ 'x' : 74.66, 'y' : 82.81},{ 'x' : 74.66, 'y' : 90.34},{ 'x' : 75.91, 'y' : 97.24},{ 'x' : 76.54, 'y' : 102.26},{ 'x' : 77.17, 'y' : 107.28},{ 'x' : 77.79, 'y' : 108.54},{ 'x' : 78.42, 'y' : 107.28},{ 'x' : 80.3, 'y' : 106.65},{ 'x' : 82.19, 'y' : 106.03},{ 'x' : 84.07, 'y' : 106.65},{ 'x' : 86.58, 'y' : 106.65},{ 'x' : 89.09, 'y' : 106.03},{ 'x' : 91.6, 'y' : 106.03},{ 'x' : 94.11, 'y' : 105.4},{ 'x' : 95.36, 'y' : 105.4},{ 'x' : 97.87, 'y' : 104.77},{ 'x' : 100.38, 'y' : 104.14},{ 'x' : 102.26, 'y' : 103.52},{ 'x' : 104.14, 'y' : 102.26},{ 'x' : 106.03, 'y' : 101.01},{ 'x' : 107.28, 'y' : 100.38},{ 'x' : 109.16, 'y' : 98.5},{ 'x' : 110.42, 'y' : 96.62},{ 'x' : 111.67, 'y' : 94.11},{ 'x' : 112.3, 'y' : 92.85},{ 'x' : 112.93, 'y' : 90.97},{ 'x' : 113.55, 'y' : 89.09},{ 'x' : 114.18, 'y' : 87.83},{ 'x' : 114.18, 'y' : 85.95},{ 'x' : 114.81, 'y' : 84.7},{ 'x' : 115.44, 'y' : 82.19},{ 'x' : 115.44, 'y' : 80.93},{ 'x' : 115.44, 'y' : 79.68},{ 'x' : 115.44, 'y' : 76.54},{ 'x' : 115.44, 'y' : 74.03},{ 'x' : 115.44, 'y' : 70.89},{ 'x' : 115.44, 'y' : 67.13},{ 'x' : 114.81, 'y' : 63.36},{ 'x' : 114.81, 'y' : 58.97},{ 'x' : 114.18, 'y' : 55.21},{ 'x' : 113.55, 'y' : 51.44},{ 'x' : 113.55, 'y' : 48.31},{ 'x' : 113.55, 'y' : 45.8},{ 'x' : 113.55, 'y' : 44.54},{ 'x' : 112.93, 'y' : 40.78},{ 'x' : 112.93, 'y' : 38.9},{ 'x' : 112.93, 'y' : 36.39},{ 'x' : 112.93, 'y' : 34.51},{ 'x' : 112.93, 'y' : 32.62},{ 'x' : 112.93, 'y' : 30.74},{ 'x' : 112.93, 'y' : 28.86},{ 'x' : 112.3, 'y' : 26.98},{ 'x' : 112.93, 'y' : 25.1},{ 'x' : 112.93, 'y' : 23.21},{ 'x' : 112.93, 'y' : 21.96},{ 'x' : 113.55, 'y' : 20.08},{ 'x' : 113.55, 'y' : 18.82},{ 'x' : 113.55, 'y' : 17.57},{ 'x' : 113.55, 'y' : 16.31},{ 'x' : 113.55, 'y' : 15.06},{ 'x' : 114.18, 'y' : 13.8},{ 'x' : 114.18, 'y' : 12.55},{ 'x' : 114.18, 'y' : 11.29},{ 'x' : 114.18, 'y' : 10.04},{ 'x' : 114.18, 'y' : 8.78},{ 'x' : 114.18, 'y' : 7.53},{ 'x' : 113.55, 'y' : 6.27},{ 'x' : 113.55, 'y' : 5.02},{ 'x' : 111.67, 'y' : 3.76},{ 'x' : 107.28, 'y' : 2.51},{ 'x' : 104.77, 'y' : 1.88},{ 'x' : 97.24, 'y' : 0.63},{ 'x' : 92.85, 'y' : 0.63},{ 'x' : 89.71, 'y' : 0.63},{ 'x' : 80.93, 'y' : 0.63},{ 'x' : 78.42, 'y' : 0.63},{ 'x' : 69.01, 'y' : 0.63},{ 'x' : 60.86, 'y' : 0.63},{ 'x' : 53.95, 'y' : 1.88},{ 'x' : 46.43, 'y' : 2.51},{ 'x' : 40.15, 'y' : 3.76},{ 'x' : 33.88, 'y' : 5.02},{ 'x' : 27.6, 'y' : 5.65},{ 'x' : 21.33, 'y' : 6.27},{ 'x' : 15.68, 'y' : 6.27},{ 'x' : 9.41, 'y' : 6.9},{ 'x' : 3.76, 'y' : 6.27},{ 'x' : -1.88, 'y' : 5.65},{ 'x' : -5.65, 'y' : 5.65},{ 'x' : -9.41, 'y' : 5.02},]
 
 shoot_discs_auto_program = [
-
     {
-        "flywheel_speed" : 30,
+        "wait" : 8,
+    },
+    {
+        "flywheel_speed" : 50,
         "wait" : 2.
     },
     {
         "shoot_disc" : 4,
-    
     },
 
 ]
@@ -2320,19 +2293,9 @@ auto_test = [
     },
     {
         "message" : "spinning",
-        "wait" : 5,
-        "roller_spin_for" : 360,
+        "roller_spin_for" : 0.5,
     },
-    {
-        "message" : "waiting",
-        "wait" : 2,
-        "intake_speed" : 0,
-    },
-    {
-        "message" : "spinnning intake",
-        "wait" : 2,
-        "intake_speed" : 50
-    }
+
 ]
 
 skills_auto = [
@@ -2344,37 +2307,59 @@ skills_auto = [
         "auto_intake" : False,
         "auto_roller" : True,
         "drone_mode" : True,
-        # "intake_speed" : 100,
+        "roller_spin_for" : 0.6,
         "wait" : 1,
         "override_velocity_y" : -20,
         "message" : "Doing rollers..."
     },
     {
         "wait" : 0.9,
-        "override_velocity_y" : 45,
         "override_velocity_x" : 0,
+        "override_velocity_y" : 45,
     },
     {
+        "override_velocity_y" : 0,
+        "wait" : 0.5,
+    },
+
+    # Shoot flywheel
+    {
+        "theta" : 96.5,
+        "flywheel_speed" : 38.5,
+        "wait" : 2,
+    },
+    {
+        "shoot_disc" : 1
+    },
+    {
+        "wait" : 1,
+    },
+    {
+        "shoot_disc" : 1
+    },
+    {
+        "flywheel_speed" : 0,
         "theta" : 90,
         "wait" : 1,
-        "override_velocity_y" : 0,
         "message" : "Turning 90 degrees..."
-            
     },
     {
         "override_velocity_x" : -50,
         "wait" : 0.5
     },
     {
-        "override_velocity_x" : -20,
-        "override_velocity_y" : -2,
-        "wait" : 4,
+        "override_velocity_x" : -40,
+        "override_velocity_y" : -5,
+        "wait" : 1,
         "message" : "Doing other rollers",
     },
     {
-        "override_velocity_x" : 40,
+        "roller_spin_for" : 0.5,
+    },
+    {
+        "override_velocity_x" : 50,
         "override_velocity_y" : 10,
-        "wait" : 0.5,
+        "wait" : 0.95,
     },
     {
         "theta" : 270 - 45,
@@ -2382,10 +2367,59 @@ skills_auto = [
     },
     {
         "message" : "moving towards other rollers",
-        "override_velocity_x" : 100,
-        "override_velocity_y" : 100,
-        "wait" : 40  
+        "override_velocity_x" : 40,
+        "override_velocity_y" : 39,
+        "wait" : 5.8  
     },
+    {   
+        "override_velocity_x" : -20,
+        "override_velocity_y" : -0,
+        "wait" : 0.7,
+    },
+    {
+        "override_velocity_x" : 0,
+        "override_velocity_y" : 40,
+        "wait" : 1
+    },
+    {
+        "wait" : 2,
+        "theta" : 180,
+    },
+    {
+        "message" : "Moving to other roller",
+        "override_velocity_x" : -20,
+        "override_velocity_y" : -20,
+        "wait" : 1, 
+    },
+    {
+        "override_velocity_x" : 0,
+        "override_velocity_y" : 0,
+        "message" : "waiting tbh",
+        "wait" : 5,
+    },
+    {
+        "theta" : 180,
+        "wait" : 2,
+    },
+    {
+        "override_velocity_x" : 0,
+        "override_velocity_y" : 50,
+        "wait" : 2,
+    },
+    {
+        "roller_spin_for" : 360,
+        "wait" : 5,
+    },
+    {
+        "override_velocity_x" : 0,
+        "override_velocity_y" : -50,
+        "wait" : 1.5,
+    },
+    {
+        "override_velocity_x" : 0,
+        "override_velocity_y" : 0,
+        "wait" : 1.5,
+    }
     # {
     #     "message" : "expanding",  
     #     "launch_expansion" : True,
@@ -2436,15 +2470,21 @@ skills_auto_w_expansion.extend([
     }
 ]
 )
+auto_intake_on_forever = [
+    {
+        "intake_speed" : 100,
+        "wait" : 9999,
+    },
+    {
+        "intake_speed" : 100,
+        "wait" : 999
+    }
+]
 
 field_length = 356  # CM
 
 # Initializes a robot object
 r = Robot()
-
-r.x_vel_PID.set_constants(10,0,0)
-r.y_vel_PID.set_constants(10,0,0)
-r.theta_vel_PID.set_constants(10,0,1)
 
 ######### GUI ######### GUI ######### GUI ######### GUI ######### GUI ######### GUI #########
 
@@ -2484,7 +2524,7 @@ gui.add_page([
     Button("Go To Debug", 360, 200, 120, 40, (0xAAAAAA), lambda: gui.set_page(1)),
 
     # Auto Selector
-    Switch(["3-Square", "SKILLS", "ShootDiscs", "Manual", "2-Square", "Auto"], 0, 120, 120, 40, [0x33FF33, 0x33CC33, 0x33AA33, 0x339933, 0x337733, 0x335533], lambda auto_mode: r.set_autonomous_procedure(auto_mode), [match_auto_three_squares, skills_auto, skills_auto_w_expansion, shoot_discs_auto_program, match_auto_two_squares, auto_test]),
+    Switch(["3-Square", "2-Square", "SKILLS", "ShootDiscs", "Intake Forever", "Temp"], 0, 120, 120, 40, [0x33FF33, 0x33CC33, 0x33AA33, 0x339933, 0x337733, 0x335533], lambda auto_mode: r.set_autonomous_procedure(auto_mode), [match_auto_three_squares, match_auto_two_squares, skills_auto, shoot_discs_auto_program, auto_intake_on_forever, auto_test]),
     Button("Run auto", 0, 160, 120, 40, (0xAAAAAA), lambda: r.run_autonomous()),
 ])
 
@@ -2498,6 +2538,8 @@ gui.add_page([
     Switch(["Auto Roller", "Manual Roller"], 120, 80, 120, 40, [Color(0x88AA88), Color(0xAA8888)], [r.set_target_state] * 2, [{"auto_roller" : True}, {"auto_roller" : False}],),
     Button("Flywheel +2", 0, 40, 120, 40, (0x88AA88), lambda: r.set_target_state({"flywheel_speed" : r.flywheel_speed + 2,}),), 
     Button("Flywheel -2", 0, 80, 120, 40, (0xAA8888), lambda: r.set_target_state({"flywheel_speed" : r.flywheel_speed - 2,}),),
+    Button("Shoot Disc", 0, 120, 120, 40, (0x8888AA), lambda: r.set_target_state({"shoot_disc" : 1,}),),
+    
     Button("Reset θ", 0, 200, 120, 40, (0xAAAAFA), reset_robot_theta), 
     Switch(["GPS", "No GPS"], 120, 160, 120, 40, [Color(0x88AA88), Color(0xAA8888)], [r.set_target_state] * 2, [{"use_gps" : True}, {"use_gps" : False}]),
     Button("Add to Path", 120, 200, 120, 40, (0xAAFAAA), r.path.append(r.state.copy())),
@@ -2511,16 +2553,17 @@ gui.add_page([
     Text("", 360, 40, 120, 40, Color.BLACK, lambda: f("T", round(flywheel_motor_1.temperature()), round(flywheel_motor_2.temperature()))),
     Button("Go To Comp", 360, 200, 120, 40, (0xAAAAAA), lambda: gui.set_page(0)),
     Text("", 120, 40, 120, 40, Color.BLACK, lambda: f(round(left_motor_a.temperature()), round(left_motor_b.temperature()), round(right_motor_a.temperature()), round(right_motor_b.temperature()))),
-
 ])
 
 gui.add_page([
     Text("Prematch Checklist!", 120, 0, 240, 20, Color.BLACK),
     Text("", 50, 20, 430, 30, Color.BLACK, lambda: f("Flywheel temperature < 45 deg? (", round(flywheel_motor_1.temperature()), round(flywheel_motor_2.temperature()),")")),
-    Text("Flywheel lubed up recently?", 50, 50, 430, 30, Color.BLACK),
-    Text("Expansion set?", 50, 50, 430, 30, Color.BLACK),
-    Text("Expansion set?", 50, 50, 430, 30, Color.BLACK),
+    Text("", 50, 30, 430, 30, Color.BLACK, lambda: f("Drivetrain good? (", round(left_motor_a.temperature()), round(right_motor_a.temperature()), round(left_motor_b.temperature()), round(right_motor_b.temperature()), ")")),
+    Text("Flywheel lubed up recently?", 50, 80, 430, 30, Color.BLACK),
+    Text("Expansion set?", 50, 110, 430, 30, Color.BLACK),
+    Text("Preloads?", 50, 130, 430, 30, Color.BLACK),
 
+    Button("Go To Comp", 360, 120, 120, 40, (0xAAAAAAA), lambda: gui.set_page(0))
 ])
 
 gui.pages[2].extend(
@@ -2531,9 +2574,12 @@ gui.set_page(2)
 global debug_position
 debug_position = False
 
+
 init()
 r.init()
 
+
+# Use the robot doctor so that we can diagnose any problems
 # rd = RobotDoctor()
 # rd.init()
 # rd.run_tests()
@@ -2542,40 +2588,48 @@ r.init()
 wait(30, MSEC)
 
 
-# wait(4, SECONDS)
-
-
-# r.set_autonomous_procedure(skills_auto)
-
-r.set_autonomous_procedure(match_auto_two_squares)
+r.set_autonomous_procedure(match_auto_three_squares)
 # r.run_autonomous()
 
-def nothing():
-    return
 
-# while True:
-#     roller_and_intake_motor_1.spin(REVERSE, 100)
-#     roller_and_intake_motor_2.spin(FORWARD, -100)
+def test_drivetrain():
+    ### Tests to see how long it takes for the drivetrain to overheat (reach 55 deg.)
 
-#     roller_and_intake_motor_1.set_velocity(100)
-#     roller_and_intake_motor_2.set_velocity(-100)
+    t = Timer()
+    t.reset()
+    val = 0
+    while True:
+        r.set_target_state({
+            # Make it so that the robot is constantly rotating
+            "theta" : r.theta + 45
+        })
 
+        if t.value() > 5000 + val:
+            # Display the temperature
+            print(t.value(), left_motor_a.temperature(), right_motor_a.temperature(), left_motor_b.temperature(), right_motor_b.temperature())
+            val = t.value()
 
-#     t = Timer()
-#     t.reset()
-    
-#     while t.value() < 1000:
-#         print(roller_and_intake_motor_1.is_done(), roller_and_intake_motor_2.is_done())
-#         wait(0.01, SECONDS)
+        if left_motor_a.temperature() >= 55 or right_motor_a.temperature() >= 55 or left_motor_b.temperature() >= 55 or right_motor_b.temperature() >= 55:
+            # When any of the motors overheat (reach 55 deg. C) then stop the program and display how long it took to overheat
+            print("It took ", t.value(), "milliseconds to overheat!")
+            
+            # Stop the robot from rotating
+            r.set_target_state({
+                "theta" : r.theta
+            })
+            return
 
-#     wait(10, SECONDS)
-
+# test_drivetrain()
 
 driver_control()
 # competition = Competition(driver_control, r.run_autonomous)
 # competition = Competition(driver_control, r.run_autonomous)
 
 # ! PRIORITY
+# TODO: FIgure out how many times update gets called per second (then delete it)
+# TODO: See if changing the acceleration of the robot makes it better to drive
+# TODO: Try grabbing the control by crabbing
+
 # TODO: Use GPS to automatiically orient the robot to the high goal (and thats it)
 # TODO: Use motor.turn_for for the rollers ()
 
