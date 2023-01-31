@@ -108,7 +108,7 @@ def init():
         wait(0.1, SECONDS)
 
     # Rumlbed the control to indicate to the driver (and me) that the robot is ready to run
-    # controller_1.rumble("...")
+    controller_1.rumble("...")
 
 
 class GameObject:
@@ -708,16 +708,17 @@ class Robot:
 
     flywheel_speed_levels = [
         0,
-        round(35.00000001),
-        round(37.333333344),
-        round(39.666666678000006),
-        round(42.000000012),
-        round(44.333333346),
-        round(46.666666680000006),
-        round(49.000000014),
-        round(51.333333348000004),
-        round(53.666666682000006),
-        100
+        40,
+        # round(35.00000001),
+        # round(37.333333344),
+        # round(39.666666678000006),
+        # round(42.000000012),
+        # round(44.333333346),
+        # round(46.666666680000006),
+        # round(49.000000014),
+        # round(51.333333348000004),
+        # round(53.666666682000006),
+        # 100
     ]
     
     # State dictionary will hold ALL information about the robot
@@ -1588,7 +1589,7 @@ class Robot:
         # TODO: Adding an anti-windup mechanism: An anti-windup mechanism can prevent the integral term from growing too large, which can cause the controller to lose control. This can be especially important if the system has a large dead-zone or if the output is saturated for long periods of time.
 
         # MAX_FLYWHEEL_SPEED = 100 / 60
-        MAX_VOLTAGE = 10 # I don't think this is the true maximum voltage btw
+        MAX_VOLTAGE = 12 # I don't think this is the true maximum voltage btw
         
         speed_alpha = 0.5
         self.flywheel_1_avg_speed = flywheel_motor_1.velocity(PERCENT) * speed_alpha + self.flywheel_1_avg_speed * (1 - speed_alpha)
@@ -1619,7 +1620,7 @@ class Robot:
             self.flywheel_motor_1_average_output = 0
             self.flywheel_motor_2_average_output = 0
 
-        kP = 0.1
+        kP = 0.2
         kI = 0.002
         kD = 0.04
 
@@ -1641,8 +1642,8 @@ class Robot:
 
         # derivative_term_flywheel_2 = 0
 
-        self.flywheel_1_voltage_factor += kI * (self.flywheel_speed - self.flywheel_1_avg_speed) - derivative_term_flywheel_1 * 2 + (self.flywheel_speed - self.previous_flywheel_speed) * 0.075
-        self.flywheel_2_voltage_factor += kI * (self.flywheel_speed - self.flywheel_2_avg_speed) - derivative_term_flywheel_2 * 2 + (self.flywheel_speed - self.previous_flywheel_speed) * 0.075
+        self.flywheel_1_voltage_factor += kI * (self.flywheel_speed - self.flywheel_1_avg_speed) - derivative_term_flywheel_1 * 2 + (self.flywheel_speed - self.previous_flywheel_speed) * 0.1
+        self.flywheel_2_voltage_factor += kI * (self.flywheel_speed - self.flywheel_2_avg_speed) - derivative_term_flywheel_2 * 2 + (self.flywheel_speed - self.previous_flywheel_speed) * 0.1
 
         # Clamp the voltage so we don't send more than the maximum I stated 
         self.flywheel_1_voltage_factor = clamp(self.flywheel_1_voltage_factor, MAX_VOLTAGE, -MAX_VOLTAGE)
@@ -1650,7 +1651,9 @@ class Robot:
 
         flywheel_motor_1.spin(FORWARD, self.flywheel_1_voltage_factor + proportional_term_flywheel_1 * 0 - derivative_term_flywheel_1, VOLT)
         flywheel_motor_2.spin(FORWARD, self.flywheel_2_voltage_factor + proportional_term_flywheel_2 * 0 - derivative_term_flywheel_2, VOLT)
-
+        # flywheel_motor_1.spin(FORWARD, 10, VOLT)
+        # flywheel_motor_2.spin(FORWARD, 7, VOLT)
+        
         self.flywheel_motor_1_error = (self.flywheel_1_avg_speed - self.previous_flywheel_1_avg_speed)
         self.flywheel_motor_2_error = (self.flywheel_2_avg_speed - self.previous_flywheel_2_avg_speed)
 
@@ -2052,12 +2055,15 @@ def driver_control():
             
             # Print the flywheel torque
 
-            print(r.flywheel_speed, flywheel_motor_1.velocity(PERCENT), r.proportional_term_flywheel_1, r.flywheel_1_voltage_factor, r.derivative_term_flywheel_1)
+            # print(r.flywheel_speed, flywheel_motor_1.velocity(PERCENT), r.proportional_term_flywheel_1, r.flywheel_1_voltage_factor, r.derivative_term_flywheel_1)
+            print(r.flywheel_speed, flywheel_motor_1.velocity(PERCENT), flywheel_motor_2.velocity(PERCENT))
+            # print(brain.timer.value(), flywheel_motor_1.temperature(), flywheel_motor_2.temperature())
+            # print(brain.timer.value(), r.total_updates)
             controller_1.screen.clear_row(3)
             controller_1.screen.print(f("FLY:", r.flywheel_speed, "ang:", round(r.theta)))
 
             controller_2.screen.clear_row(3)
-            controller_2.screen.print(f("You are controller 2!"))
+            # controller_2.screen.print(f("You are controller 2!"))
             timer.reset()
 
         if controller_1.buttonUp.pressing() and not previous_controller_states["buttonUp"]:
@@ -2307,10 +2313,12 @@ skills_auto = [
         "auto_intake" : False,
         "auto_roller" : True,
         "drone_mode" : True,
-        "roller_spin_for" : 0.6,
-        "wait" : 1,
-        "override_velocity_y" : -20,
-        "message" : "Doing rollers..."
+        "override_velocity_y" : -50,
+        "message" : "Doing rollers...",
+        "wait" : 0.5,
+    },
+    {
+        "roller_spin_for" : 0.8,
     },
     {
         "wait" : 0.9,
@@ -2321,21 +2329,21 @@ skills_auto = [
         "override_velocity_y" : 0,
         "wait" : 0.5,
     },
-
     # Shoot flywheel
     {
-        "theta" : 96.5,
-        "flywheel_speed" : 38.5,
-        "wait" : 2,
+        "theta" : 94.5,
+        "flywheel_speed" : 39,
+        "wait" : 5,
     },
     {
         "shoot_disc" : 1
     },
     {
-        "wait" : 1,
+        "wait" : 5,
     },
     {
-        "shoot_disc" : 1
+        "shoot_disc" : 1,
+        "intake_speed" : 100,
     },
     {
         "flywheel_speed" : 0,
@@ -2345,19 +2353,26 @@ skills_auto = [
     },
     {
         "override_velocity_x" : -50,
-        "wait" : 0.5
+        "wait" : 0.5,
     },
     {
         "override_velocity_x" : -40,
         "override_velocity_y" : -5,
-        "wait" : 1,
-        "message" : "Doing other rollers",
+        "wait" : 0.5,
+        "message" : "Doing othe>r rollers",
+    },
+    {
+        "intake_speed" : 0,
+        "override_velocity_x" : -40,
+        "override_velocity_y" : -5,
+        "wait" : 0.5,
     },
     {
         "roller_spin_for" : 0.5,
     },
+    # Moving away from other roller
     {
-        "override_velocity_x" : 50,
+        "override_velocity_x" : 40,
         "override_velocity_y" : 10,
         "wait" : 0.95,
     },
@@ -2366,10 +2381,38 @@ skills_auto = [
         "wait" : 1.5,
     },
     {
+        "intake_speed" : 100,
         "message" : "moving towards other rollers",
         "override_velocity_x" : 40,
+        "override_velocity_y" : 40,
+        "wait" : 1.1, # was 5.8
+    },
+    {
+        "override_velocity_x" : 0,
+        "override_velocity_y" : 0,
+        "theta" : 135,
+        "flywheel_speed" : 45,
+        "wait" : 2,
+    },
+    {
+        "shoot_disc" : 1,
+    },
+    {
+        "wait" : 2,
+    },
+    {
+        "shoot_disc" : 1,
+    },
+    {
+        "wait" : 2,
+    },
+    {
+        "shoot_disc" : 1,
+    },
+    {
+        "override_velocity_x" : 40,
         "override_velocity_y" : 39,
-        "wait" : 5.8  
+        "wait" : 3.8,
     },
     {   
         "override_velocity_x" : -20,
@@ -2379,19 +2422,21 @@ skills_auto = [
     {
         "override_velocity_x" : 0,
         "override_velocity_y" : 40,
-        "wait" : 1
+        "wait" : 1,
     },
+    # Rotating to 180 degrees
     {
         "wait" : 2,
         "theta" : 180,
     },
     {
-        "message" : "Moving to other roller",
-        "override_velocity_x" : -20,
-        "override_velocity_y" : -20,
-        "wait" : 1, 
+        "message" : "Resetting position",
+        "override_velocity_x" : 42,
+        "override_velocity_y" : 35,
+        "wait" : 2, 
     },
     {
+        "intake_speed" : 0,
         "override_velocity_x" : 0,
         "override_velocity_y" : 0,
         "message" : "waiting tbh",
@@ -2601,10 +2646,10 @@ def test_drivetrain():
     while True:
         r.set_target_state({
             # Make it so that the robot is constantly rotating
-            "theta" : r.theta + 45
+            "theta" : r.theta + 140
         })
 
-        if t.value() > 5000 + val:
+        if t.value() > 5 + val:
             # Display the temperature
             print(t.value(), left_motor_a.temperature(), right_motor_a.temperature(), left_motor_b.temperature(), right_motor_b.temperature())
             val = t.value()
@@ -2629,6 +2674,10 @@ driver_control()
 # TODO: FIgure out how many times update gets called per second (then delete it)
 # TODO: See if changing the acceleration of the robot makes it better to drive
 # TODO: Try grabbing the control by crabbing
+
+# TODO: Figure out how accurate the flywheel is without the weights and with the weights
+# TODO: Try to make the flywheel osccilate less
+
 
 # TODO: Use GPS to automatiically orient the robot to the high goal (and thats it)
 # TODO: Use motor.turn_for for the rollers ()
@@ -2664,3 +2713,8 @@ driver_control()
 # TODO: make an auto path class that has information like description, color, etc.
 # TODO: Research how to utilize motor.temperature
 # TODO: Make an info screen that shows if there are any status issues wrong with the robot
+
+
+
+# 6:46 14%
+# 
