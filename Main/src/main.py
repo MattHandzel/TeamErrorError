@@ -708,17 +708,16 @@ class Robot:
 
     flywheel_speed_levels = [
         0,
-        40,
-        # round(35.00000001),
-        # round(37.333333344),
-        # round(39.666666678000006),
-        # round(42.000000012),
-        # round(44.333333346),
-        # round(46.666666680000006),
-        # round(49.000000014),
-        # round(51.333333348000004),
-        # round(53.666666682000006),
-        # 100
+        round(35.00000001),
+        round(37.333333344),
+        round(39.666666678000006),
+        round(42.000000012),
+        round(44.333333346),
+        round(46.666666680000006),
+        round(49.000000014),
+        round(51.333333348000004),
+        round(53.666666682000006),
+        100
     ]
     
     # State dictionary will hold ALL information about the robot
@@ -1620,16 +1619,16 @@ class Robot:
             self.flywheel_motor_1_average_output = 0
             self.flywheel_motor_2_average_output = 0
 
-        kP = 0.2
-        kI = 0.002
-        kD = 0.04
+        kP = 0.02
+        kI = 0.00007
+        kD = 0.05
 
         proportional_term_flywheel_1 = kP * (self.flywheel_speed - flywheel_motor_1.velocity(PERCENT))
         derivative_term_flywheel_1 = kD * (self.flywheel_1_avg_speed - self.previous_flywheel_1_avg_speed)
         # error_helper_term_flywheel_1 = 0.01 * ((self.flywheel_speed - self.flywheel_1_avg_speed) - self.previous_flywheel_1_error) 
 
-        # derivative_term_flywheel_1 = max(derivative_term_flywheel_1, -0.5)
-        # derivative_term_flywheel_1 = min(derivative_term_flywheel_1, 0.5)
+        derivative_term_flywheel_1 = max(derivative_term_flywheel_1, -0.5)
+        derivative_term_flywheel_1 = min(derivative_term_flywheel_1, 0.5)
 
         # derivative_term_flywheel_1 = 0
 
@@ -1637,22 +1636,22 @@ class Robot:
         derivative_term_flywheel_2 = kD * (self.flywheel_2_avg_speed - self.previous_flywheel_2_avg_speed)
         # error_helper_term_flywheel_2 = 0.01 * ((self.flywheel_speed - self.flywheel_1_avg_speed) - self.previous_flywheel_1_error) 
 
-        # derivative_term_flywheel_2 = max(derivative_term_flywheel_2, -0.5)
-        # derivative_term_flywheel_2 = min(derivative_term_flywheel_2, 0.5)
+        derivative_term_flywheel_2 = max(derivative_term_flywheel_2, -0.5)
+        derivative_term_flywheel_2 = min(derivative_term_flywheel_2, 0.5)
 
         # derivative_term_flywheel_2 = 0
 
-        self.flywheel_1_voltage_factor += kI * (self.flywheel_speed - self.flywheel_1_avg_speed) - derivative_term_flywheel_1 * 2 + (self.flywheel_speed - self.previous_flywheel_speed) * 0.1
-        self.flywheel_2_voltage_factor += kI * (self.flywheel_speed - self.flywheel_2_avg_speed) - derivative_term_flywheel_2 * 2 + (self.flywheel_speed - self.previous_flywheel_speed) * 0.1
+        self.flywheel_1_voltage_factor += kI * (self.flywheel_speed - self.flywheel_1_avg_speed) - derivative_term_flywheel_1 * 0.0 + (self.flywheel_speed - self.previous_flywheel_speed) * 0.1252
+        self.flywheel_2_voltage_factor += kI * (self.flywheel_speed - self.flywheel_2_avg_speed) - derivative_term_flywheel_2 * 0.0 + (self.flywheel_speed - self.previous_flywheel_speed) * 0.142
 
         # Clamp the voltage so we don't send more than the maximum I stated 
         self.flywheel_1_voltage_factor = clamp(self.flywheel_1_voltage_factor, MAX_VOLTAGE, -MAX_VOLTAGE)
         self.flywheel_2_voltage_factor = clamp(self.flywheel_2_voltage_factor, MAX_VOLTAGE, -MAX_VOLTAGE)
 
-        flywheel_motor_1.spin(FORWARD, self.flywheel_1_voltage_factor + proportional_term_flywheel_1 * 0 - derivative_term_flywheel_1, VOLT)
-        flywheel_motor_2.spin(FORWARD, self.flywheel_2_voltage_factor + proportional_term_flywheel_2 * 0 - derivative_term_flywheel_2, VOLT)
+        flywheel_motor_1.spin(FORWARD, self.flywheel_1_voltage_factor + proportional_term_flywheel_1 * 1 - derivative_term_flywheel_1, VOLT)
+        flywheel_motor_2.spin(FORWARD, self.flywheel_2_voltage_factor + proportional_term_flywheel_2 * 1 - derivative_term_flywheel_2, VOLT)
         # flywheel_motor_1.spin(FORWARD, 10, VOLT)
-        # flywheel_motor_2.spin(FORWARD, 7, VOLT)
+        # flywheel_motor_2.spin(FORWARD, 10, VOLT)
         
         self.flywheel_motor_1_error = (self.flywheel_1_avg_speed - self.previous_flywheel_1_avg_speed)
         self.flywheel_motor_2_error = (self.flywheel_2_avg_speed - self.previous_flywheel_2_avg_speed)
@@ -1939,7 +1938,7 @@ def driver_control():
         # Render and update the gui before everything else
     
         # If the joystick hasn't been pressed 
-        new_theta = controller_1.axis1.position() * 0.5
+        new_theta = (abs(controller_1.axis1.position())) ** 2 * sign(controller_1.axis1.position()) / 150
 
         new_x = ((controller_1.axis4.position())) ** 2 * sign(controller_1.axis4.position()) / 100
         new_y = ((controller_1.axis3.position())) ** 2 * sign(controller_1.axis3.position()) / 100
@@ -2060,7 +2059,9 @@ def driver_control():
             # print(brain.timer.value(), flywheel_motor_1.temperature(), flywheel_motor_2.temperature())
             # print(brain.timer.value(), r.total_updates)
             controller_1.screen.clear_row(3)
-            controller_1.screen.print(f("FLY:", r.flywheel_speed, "ang:", round(r.theta)))
+
+            # Display the flywheel speed and the robot theta from [-180 to 180]
+            controller_1.screen.print(f("FLY:", r.flywheel_speed, "ang:", round(r.theta if r.theta < 180 else -r.theta + 180)))
 
             controller_2.screen.clear_row(3)
             # controller_2.screen.print(f("You are controller 2!"))
@@ -2225,66 +2226,71 @@ match_auto_two_squares = [
         "auto_intake" : False,
         "auto_roller" : False,
         "drone_mode" : True,
-
         # POSITIVE INTAKE SPEED IS BLUE, NEGATIVE IS RED
-        "intake_speed" : -40,
-        "wait" : 1.0,
-        "message" : "Doing rollers..."
+        "flywheel_speed" : 39,
     },
     {
-        "override_velocity_x": 20,
+        "override_velocity_x": 40,
         "override_velocity_y": 0,
-        "wait" : 2.2,
+        "wait" : 1.2,
     },
     {
         "override_velocity_x": 0,
-        "override_velocity_y": -20,
-        "wait" : 4.05,
+        "override_velocity_y": -50,
+        "wait" : 0.7,
     },
-    {   
-        "override_velocity_y" : 10,
-        "wait" : 1,
+    {
+        "roller_spin_for" : 0.3,
+    },
+    {
+        # At this point we have just done the roller and are moving forward
+        "wait" : 0.4,
+        "override_velocity_x" : 0,
+        "override_velocity_y" : 45,
     },
     {
         "override_velocity_y" : 0,
-    },
-    {
-        "theta" : -94,
-        "flywheel_speed" : 35,
+        "theta" : -180,
+        "intake_speed" : 100,
         "wait" : 2,
     },
     {
-        "shoot_disc" : 3,
+        # At this point we have just intaked a disc
+        "wait" : 0.3,
+        "override_velocity_x" : 0,
+        "override_velocity_y" : 45,
     },
-    # {
-    #     "theta" : 0,
-    # }
-    # {
-    #     "override_velocity_y" : 10,
-    #     "wait" : 1
-    # },
-    # {   
-    #     "theta" : 0, 
-    #     "override_velocity_y" : 0,
-    #     "override_velocity_x" : 0,
-    #     "wait" : 2,
-    #     "flywheel_speed" : 34
-    # },
-    # {
-    #     "shoot_disc" : 3,
-    # },
-    # {
-    #     "intake_speed" : 0,
-    #     "wait" : 0.5,
-    #     "override_velocity_y" : 30,
-    #     "override_velocity_x" : 0,
-    # },
-    # {
-    #     "theta" : 90,
-    #     "wait" : 1,
-    #     "override_velocity_y" : 0,
-    #     "message" : "Turning 90 degrees..."
-    # },
+    {
+        # Moving backwards a bit so we don't get penalized
+        "wait" : 0.3,
+        "override_velocity_x" : 0,
+        "override_velocity_y" : -10,
+    },
+    {
+        # Turn around
+        "theta" : -7,
+        "wait" : 2,
+        "override_velocity_y" : 0,
+    },
+    {
+        # Shoot discs
+        "shoot_disc" : 1
+    },
+    {
+        "wait" : 5,
+    },
+    {
+        # Shoot discs
+        "shoot_disc" : 1
+    },
+    {
+        "wait" : 5,
+    },
+    {
+        # Shoot discs
+        "shoot_disc" : 1
+    },
+    
 ]
 
 auto_test = [
@@ -2316,6 +2322,7 @@ skills_auto = [
         "override_velocity_y" : -50,
         "message" : "Doing rollers...",
         "wait" : 0.5,
+        "flywheel_speed" : 39,
     },
     {
         "roller_spin_for" : 0.8,
@@ -2327,14 +2334,10 @@ skills_auto = [
     },
     {
         "override_velocity_y" : 0,
-        "wait" : 0.5,
+        "theta" : 94.5,
+        "wait" : 1,
     },
     # Shoot flywheel
-    {
-        "theta" : 94.5,
-        "flywheel_speed" : 39,
-        "wait" : 5,
-    },
     {
         "shoot_disc" : 1
     },
@@ -2452,7 +2455,7 @@ skills_auto = [
         "wait" : 2,
     },
     {
-        "roller_spin_for" : 360,
+        "roller_spin_for" : 0.5,
         "wait" : 5,
     },
     {
@@ -2562,6 +2565,8 @@ gui.add_page([
     Switch(["Auto Roller", "Manual Roller"], 120, 80, 120, 40, [Color(0x88AA88), Color(0xAA8888)], [r.set_target_state] * 2, [{"auto_roller" : True}, {"auto_roller" : False}],),
     Button("Reset θ", 0, 200, 120, 40, (0xAAAAFA), reset_robot_theta), 
     Switch(["GPS", "No GPS"], 120, 160, 120, 40, [Color(0x88AA88), Color(0xAA8888)], [r.set_target_state] * 2, [{"use_gps" : True}, {"use_gps" : False}]),
+    Switch(["Expansion On", "Expansion Off"], 120, 200, 120, 40, [Color(0x88AA88), Color(0xAA8888)], [r.set_target_state] * 2, [{"launch_expansion" : True}, {"launch_expansion" : False}]),
+
     # Save the path by printing the representation (in the future it can be saved to sd car), 
     Text("", 240, 40, 120, 40, Color.BLACK, lambda: "x: {:.2f}".format(r.x_pos),), 
     Text("", 240, 80, 120, 40, Color.BLACK,lambda: "y: {:.2f}".format(r.y_pos),), 
@@ -2671,16 +2676,13 @@ driver_control()
 # competition = Competition(driver_control, r.run_autonomous)
 
 # ! PRIORITY
-# TODO: FIgure out how many times update gets called per second (then delete it)
 # TODO: See if changing the acceleration of the robot makes it better to drive
 # TODO: Try grabbing the control by crabbing
 
 # TODO: Figure out how accurate the flywheel is without the weights and with the weights
 # TODO: Try to make the flywheel osccilate less
 
-
 # TODO: Use GPS to automatiically orient the robot to the high goal (and thats it)
-# TODO: Use motor.turn_for for the rollers ()
 
 # TODO: Test out hold vs. break for driving
 # TODO: Make driving not care about turning speed
