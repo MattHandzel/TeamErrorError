@@ -1606,7 +1606,7 @@ class Robot:
         MAX_VOLTAGE = 12 # I don't think this is the true maximum voltage btw
         
         # This so for the derivative term so that it isn't working with the chaotic value of flywheel speed that fluctuates rapidly, but the averaged flywheel speed
-        speed_alpha = 0.1
+        speed_alpha = 0.1 # was 0.25y
         self.flywheel_1_avg_speed = flywheel_motor_1.velocity(PERCENT) * speed_alpha + self.flywheel_1_avg_speed * (1 - speed_alpha)
         self.flywheel_2_avg_speed = flywheel_motor_2.velocity(PERCENT) * speed_alpha + self.flywheel_2_avg_speed * (1 - speed_alpha)
 
