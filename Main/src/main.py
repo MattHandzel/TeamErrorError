@@ -60,6 +60,25 @@ vision = Vision(Ports.PORT7, 50, vision__DISC, vision__BRIGHT_DISK, vision__RED,
 
 DISC_SIGNATURES = [vision__DISC, vision__BRIGHT_DISK]
 
+def print_state_nicely(state):
+  # print white space so we can see easier when coping and pasting
+  print("[\n")
+
+  # nicely format the state dictionary
+  for s in state:
+    _str = ""
+    _str += "\n  {"
+    for key in s:
+      _str += "\n    " + "\"" + key + "\"" + ": " + str(s[key]) + ","
+    _str += "\n  },"
+    print(_str)
+
+  print("]\n")
+
+
+
+
+
 
 def get_angle_to_object(pos_1, pos_2):
     '''
@@ -123,6 +142,8 @@ def init():
         "using_gps": gps.installed(),
     })
 
+    gps.set_origin(84, 200, MM)
+    
     # Wait for the gyro to settle, if it takes more then 10 seconds then close out of the loop
     # When the gyro sensor inits, it reads some value for the Z rotation, this is less than a few degrees, but i don't like it
     while (inertial.gyro_rate(ZAXIS) != 0 and t.value() < 10):
@@ -544,7 +565,8 @@ class GUI:
             # Figure out if the finger press was inside the bound-box of an element
             if (x - element.x) > 0 and (x - element.x) < element.w and (y-element.y) > 0 and (y - element.y) < element.h:
                 # Run the callback function of the element as a thread (so the rest of the code DOES NOT stop)
-                Thread(element())
+                Thread(element.__call__)
+
         
     self.previous_brain_screen_state = brain.screen.pressing()
   
@@ -679,8 +701,8 @@ class Robot:
     previous_flywheel_1_error = 0
     previous_flywheel_2_error = 0
 
-    flywheel_1_voltage_factor = 0
-    flywheel_2_voltage_factor = 0
+    integral_term_flywheel_1 = 0
+    integral_term_flywheel_2 = 0
 
     previous_flywheel_speed = 0
 
@@ -706,8 +728,7 @@ class Robot:
     wheel_diameter_CM: float = 10.5
 
     # In order to get this, it is ticks for the specific gear ratio we're using divided by the circumeference of our wheel
-    wheel_distance_CM_to_TICK_coefficient: float = (drivetrain_gear_ratio / 6 * 300) / \
-        (math.pi * wheel_diameter_CM)
+    wheel_distance_CM_to_TICK_coefficient: float = (drivetrain_gear_ratio / 6 * 300) / (math.pi * wheel_diameter_CM) * 0.45
 
     # * PID controllers
 
@@ -727,8 +748,8 @@ class Robot:
     orientation_tolerance = 8 # tolerance to target orientation in degrees
     
     # From 0,0 (which is the center of the field). Dimensions were got from page 89 on: https://content.vexrobotics.com/docs/2022-2023/vrc-spin-up/VRC-SpinUp-Game-Manual-2.2.pdf
-    red_goal = GameObject((122.63 - 70.2) * 2.54, (122.63 - 70.2) * 2.54)
-    blue_goal = GameObject(-(122.63 - 70.2) * 2.54, -(122.63 - 70.2) * 2.54)
+    red_goal = GameObject(143, 143)
+    blue_goal = GameObject(-143, -143)
 
     flywheel_speed_levels = [
         0,
@@ -746,6 +767,8 @@ class Robot:
         80,
         100
     ]
+
+    
     
     # State dictionary will hold ALL information about the robot
     '''
@@ -821,11 +844,24 @@ class Robot:
 
     save_states = False
 
-    path = []
+    path = [
+        # Initial state of the robot
+        {
+        "setX" : 0,
+        "setY" : 0,
+        "override_velocity_x" : None,
+        "override_velocity_y" : None,
+        "override_velocity_theta" : None,
+        "drone_mode" : True,
+        },
+    ]
 
     total_updates = 0
 
     flywheel_recovery_timer = Timer()
+
+    average_target_flywheel_output_1 = 0
+    average_target_flywheel_output_2 = 0
 
     def __init__(self):
 
@@ -833,7 +869,7 @@ class Robot:
         self.max_velocity = ((self.wheel_max_rpm / 60) *
                              math.pi * 2 * self.wheel_diameter_CM / math.sqrt(2))
         # This number in the divisor means it will speedup/slow down in that many seeconds
-        self.max_acceleration = 2 * self.max_velocity / 0.05
+        self.max_acceleration = 2 * self.max_velocity / 0.001
 
         # Set origin of the gps
         gps.set_origin(0,0)
@@ -873,7 +909,7 @@ class Robot:
         '''
         while True:
           self.update()
-          wait(self.update_loop_delay * 10, SECONDS)
+          wait(self.update_loop_delay, SECONDS)
 
     def update(self):
         '''
@@ -937,8 +973,6 @@ class Robot:
         if self.target_state["theta"] != None:
             delta_theta = self.target_state["theta"] - self.theta
 
-        if debug_position:
-            print("delta x,y,theta", delta_x, delta_y, delta_theta)
 
         # Turn via the shortest path
         if delta_theta > 180:
@@ -946,13 +980,20 @@ class Robot:
         elif delta_theta < -180:
             delta_theta += 360
 
+        orientation_tolerance = 10
+        position_tolerance = 8
         # Make sqrt the delta theta, so that the tolerance is not linear but a sqrt relationshup
         delta_theta = math.sqrt(abs(delta_theta)) * sign(delta_theta) 
 
         # The multiplying by 100 and dividing by self.position tolerance scales it so that at position tolerance the velocity is 100 percent, squaring the velocity makes it so that if we get closer than we go slower
-        target_x_vel = ((clamp(delta_x, self.position_tolerance, -self.position_tolerance) * 100 / self.position_tolerance) ** 2) / 100 * sign(delta_x)
-        target_y_vel = ((clamp(delta_y, self.position_tolerance, -self.position_tolerance) * 100 / self.position_tolerance) ** 2) / 100 * sign(delta_y)
-        target_theta_vel = ((clamp(delta_theta, self.orientation_tolerance, -self.orientation_tolerance) * 100 / self.orientation_tolerance) ** 2) / 100 * sign(delta_theta)
+        # target_x_vel = ((clamp(delta_x, position_tolerance, -position_tolerance) * 100 / position_tolerance) ** 2) / 100 * sign(delta_x) * (0.3 if self.running_autonomous else 1)
+        # target_y_vel = ((clamp(delta_y, position_tolerance, -position_tolerance) * 100 / position_tolerance) ** 2) / 100 * sign(delta_y) * (0.1 if self.running_autonomous else 1)
+        
+        target_x_vel = ((clamp(delta_x, position_tolerance, -position_tolerance) * 100 / position_tolerance) ** 2) / 100 * sign(delta_x) * (0.3 if self.running_autonomous else 1)
+        target_y_vel = ((clamp(delta_y, position_tolerance, -position_tolerance) * 100 / position_tolerance) ** 2) / 100 * sign(delta_y) * (0.3 if self.running_autonomous else 1)
+        
+        
+        target_theta_vel = ((clamp(delta_theta, orientation_tolerance, -orientation_tolerance) * 100 / (orientation_tolerance - 2)) ** 2) / 100 * sign(delta_theta) * (0.3 if self.running_autonomous else 1)
         
         if self.target_state["override_velocity_x"] != None:
             target_x_vel = self.target_state["override_velocity_x"]
@@ -1122,8 +1163,11 @@ class Robot:
         # If we are close to our target position then say that we reached our target state (useful for autonomous mode)
         # if ((abs(self.state["x_pos"] - self.target_state["x_pos"]) < self.position_tolerance and abs(self.state["y_pos"] - self.target_state["y_pos"]) < self.position_tolerance) \
         #     or (self.state["override_velocity_y"] != None or self.state["override_velocity_x"] != None)):
-            
-        if self.shoot_disc <= 0 and self["roller_and_intake_motor_1_done"] and self["roller_and_intake_motor_2_done"]:
+        
+        target_state_position_tolerance = 2
+        target_state_theta_tolerance = 1.5
+
+        if self.shoot_disc <= 0 and self["roller_and_intake_motor_1_done"] and self["roller_and_intake_motor_2_done"] and abs(self["x_pos"] - self.target_state["x_pos"]) < target_state_position_tolerance and abs(self["y_pos"] - self.target_state["y_pos"]) < target_state_position_tolerance and abs(self["theta"] - self.target_state["theta"]) < target_state_theta_tolerance:
             self.target_reached = True
         
 
@@ -1132,8 +1176,8 @@ class Robot:
         self["flywheel_2_torque"] = flywheel_motor_2.torque()
         
         # Figure out if the disc has been shot by seeing if there is a large change in the flywheel torque
-        if (((self["flywheel_1_torque"] - self.previous_state["flywheel_1_torque"]) + (self["flywheel_2_torque"] - self.previous_state["flywheel_2_torque"])) / 2 > 0.07) and self.is_shooting and indexer_limit_switch.value() == 1:
-            if self.flywheel_recovery_timer.value() > 2:
+        if (((self["flywheel_1_torque"] - self.previous_state["flywheel_1_torque"]) + (self["flywheel_2_torque"] - self.previous_state["flywheel_2_torque"])) / 2 > 0.02) and self.is_shooting and indexer_limit_switch.value() == 1:
+            if self.flywheel_recovery_timer.value() > 0.45:
                 self.flywheel_recovery_timer.reset()
             self.state["disc_shot"] = True
         else:
@@ -1433,10 +1477,6 @@ class Robot:
             if "message" in step.keys():
                 self.print(f("KLAUDIA",step["message"]))
 
-            if "x" in step.keys() and "y" in step.keys():
-                target_state["x_pos"] = step["x"]
-                target_state["y_pos"] = step["y"]
-
             if "funcs" in step.keys():
                 for func in step["funcs"]:
                     func()
@@ -1637,7 +1677,7 @@ class Robot:
         # TODO: Adding an anti-windup mechanism: An anti-windup mechanism can prevent the integral term from growing too large, which can cause the controller to lose control. This can be especially important if the system has a large dead-zone or if the output is saturated for long periods of time.
 
         # MAX_FLYWHEEL_SPEED = 100 / 60
-        MAX_VOLTAGE = 12 # I don't think this is the true maximum voltage btw
+        MAX_VOLTAGE = 10.9 # I don't think this is the true maximum voltage btw
         
         # This so for the derivative term so that it isn't working with the chaotic value of flywheel speed that fluctuates rapidly, but the averaged flywheel speed
         speed_alpha = 0.2 # was 0.25
@@ -1673,15 +1713,15 @@ class Robot:
         kI = 0.0005 # before was 0.0004 (this worked pretty well)
         kD = 0.03
 
+        # Boolean to determine if the flywheel is recovering from a disc being shot
+        flywheel_recovery_mode = (self.flywheel_recovery_timer.value()) < (0.3 * (sqrt(self.flywheel_speed / 35))) and self.is_shooting
+
         # If we are shooting then do NOT increment the integral term and greatly increase the proportional term so that we can increase our speed much faster
-        if self.flywheel_recovery_timer.value() < 0.5:
+        if flywheel_recovery_mode:
             # self.flywheel_recovery_timer.reset()
             kI = 0
             kD = 0
             kP = 2.4 # before aws 0.03
-        
-        # if self.flywheel_recovery_timer.value() < 1:
-        #     print("WE ARE RECOVERING")
 
         proportional_term_flywheel_1 = kP * (self.flywheel_speed - flywheel_motor_1.velocity(PERCENT))
         derivative_term_flywheel_1 = kD * (self.flywheel_1_avg_speed - self.previous_flywheel_1_avg_speed)
@@ -1699,24 +1739,29 @@ class Robot:
         derivative_term_flywheel_2 = max(derivative_term_flywheel_2, -0.5)
         derivative_term_flywheel_2 = min(derivative_term_flywheel_2, 0.5)
         
-        self.flywheel_1_voltage_factor += kI * (self.flywheel_speed - self.flywheel_1_avg_speed) + (self.flywheel_speed - self.previous_flywheel_speed) * 0.105
-        self.flywheel_2_voltage_factor += kI * (self.flywheel_speed - self.flywheel_2_avg_speed) + (self.flywheel_speed - self.previous_flywheel_speed) * 0.11
-
+        self.integral_term_flywheel_1 += kI * (self.flywheel_speed - self.flywheel_1_avg_speed) + (self.flywheel_speed - self.previous_flywheel_speed) * 0.105
+        self.integral_term_flywheel_2 += kI * (self.flywheel_speed - self.flywheel_2_avg_speed) + (self.flywheel_speed - self.previous_flywheel_speed) * 0.11
 
         # Clamp the voltage so we don't send more than the maximum I stated 
-        self.flywheel_1_voltage_factor = clamp(self.flywheel_1_voltage_factor, MAX_VOLTAGE, -MAX_VOLTAGE)
-        self.flywheel_2_voltage_factor = clamp(self.flywheel_2_voltage_factor, MAX_VOLTAGE, -MAX_VOLTAGE)
+        self.integral_term_flywheel_1 = clamp(self.integral_term_flywheel_1, MAX_VOLTAGE, -MAX_VOLTAGE)
+        self.integral_term_flywheel_2 = clamp(self.integral_term_flywheel_2, MAX_VOLTAGE, -MAX_VOLTAGE)
 
 
-        alpha = 0
+        if flywheel_recovery_mode:
+            target_flywheel_output_1 = self.integral_term_flywheel_1 + proportional_term_flywheel_1 - derivative_term_flywheel_1
+            target_flywheel_output_2 = self.integral_term_flywheel_2 + proportional_term_flywheel_2 - derivative_term_flywheel_2
+        else:
+            alpha = 0.1
+            self.average_target_flywheel_output_1 = self.average_target_flywheel_output_1 * (1-alpha) + (self.integral_term_flywheel_1 + proportional_term_flywheel_1 - derivative_term_flywheel_1) * (alpha)  
+            self.average_target_flywheel_output_2 = self.average_target_flywheel_output_2 * (1-alpha) + (self.integral_term_flywheel_2 + proportional_term_flywheel_2 - derivative_term_flywheel_2) * (alpha)  
         
-        # self.average_flywheel_1_output = self.flywheel_1_voltage_factor + proportional_term_flywheel_1 - derivative_term_flywheel_1
-        # self.average_flywheel_2_output = self.flywheel_1_voltage_factor + proportional_term_flywheel_1 - derivative_term_flywheel_1
+            target_flywheel_output_1 = self.average_target_flywheel_output_1
+            target_flywheel_output_2 = self.average_target_flywheel_output_2
 
-        flywheel_motor_1.spin(FORWARD, self.flywheel_1_voltage_factor + proportional_term_flywheel_1 - derivative_term_flywheel_1, VOLT)
-        flywheel_motor_2.spin(FORWARD, self.flywheel_2_voltage_factor + proportional_term_flywheel_2 - derivative_term_flywheel_2, VOLT)
-        # print(brain.timer.value(), self.flywheel_1_voltage_factor + proportional_term_flywheel_1 - derivative_term_flywheel_1, self.flywheel_2_voltage_factor + proportional_term_flywheel_2 - derivative_term_flywheel_2, flywheel_motor_1.velocity(), flywheel_motor_2.velocity())
-        
+        flywheel_motor_1.spin(FORWARD, clamp(target_flywheel_output_1, MAX_VOLTAGE, -MAX_VOLTAGE), VOLT)
+        flywheel_motor_2.spin(FORWARD, clamp(target_flywheel_output_2, MAX_VOLTAGE, -MAX_VOLTAGE), VOLT)
+        # print(brain.timer.value(), flywheel_motor_1.velocity(PERCENT), flywheel_motor_2.velocity(PERCENT), target_flywheel_output_1, target_flywheel_output_2, int(self.is_shooting) * 35)
+
         self.flywheel_motor_1_error = (self.flywheel_1_avg_speed - self.previous_flywheel_1_avg_speed)
         self.flywheel_motor_2_error = (self.flywheel_2_avg_speed - self.previous_flywheel_2_avg_speed)
 
@@ -1790,7 +1835,12 @@ class Robot:
         # distance_to_goal * theta_flywheel
         pass    
 
-
+    def return_state_of_auto(self):
+        # Return all of the states that we're going to need during autonomous to set
+        state_names = ["x_pos", "y_pos", "theta", "flywheel_speed", "intake_speed", "launch_expansion"]
+        state = {state : self[state] for state in state_names}
+        state["message"] = f("\"This is state #", len(r.path), "!\"")
+        return state
 
 class Test:
     '''
@@ -1918,7 +1968,6 @@ class RobotDoctor:
           },
       ]
 
-
       for point in path:
           self.r.set_target_state(point)
           self.r.print(("Robot should be going to...", point))
@@ -1927,7 +1976,6 @@ class RobotDoctor:
           while not controller_1.buttonUp.pressing():
             self.r.print(f("X:", self.r.x_pos, "Y:", self.r.y_pos, "Theta:", self.r.theta))
             wait(1, SECONDS)
-        
         
 prematch_checks = [
   Test(
@@ -1965,7 +2013,6 @@ all_tests = [
     {}
   )
 ]
-
 
 ######## COMPETITION FUNCTIONS ### COMPETITION FUNCTIONS ### COMPETITION FUNCTIONS ### COMPETITION FUNCTIONS ###
 def autonomous():
@@ -2026,16 +2073,28 @@ def driver_control():
         if r.running_autonomous:
             continue
 
-        # print("we are running auto right now")
-
         # Render and update the gui before everything else
-    
         # If the joystick hasn't been pressed 
         new_theta = ((controller_1.axis1.position())) ** 2 * sign(controller_1.axis1.position()) / 100
 
         new_x = ((controller_1.axis4.position())) ** 2 * sign(controller_1.axis4.position()) / 100
         new_y = ((controller_1.axis3.position())) ** 2 * sign(controller_1.axis3.position()) / 100
+        
         new_intake = clamp(controller_2.buttonL1.pressing() * 100 - controller_2.buttonR1.pressing() * 100, 100, -100)
+
+        if controller_2.buttonLeft.pressing():
+            new_intake = None
+            r.set_target_state({
+                "roller_spin_for" : 0.5,
+                }
+            )
+
+        if controller_2.buttonRight.pressing():
+            new_intake = None
+            r.set_target_state({
+                "roller_spin_for" : 0.25,
+                }
+            )
 
         ### AUTO-ORIENTATE FEATURE
         if controller_1.buttonA.pressing():
@@ -2097,22 +2156,19 @@ def driver_control():
                 r.set_target_state({
                     "theta" : 180,
                 })
-
         
         if controller_1.buttonUp.pressing() and r.using_gps and gps.quality() >= 100:
             new_theta = None
             
             # If the robot is closer to one goal or the other 
-            # goal = r.red_goal if r.x_from_gps + r.y_from_gps > 0 else r.blue_goal
-
+            goal = r.red_goal if r.x_from_gps + r.y_from_gps > 0 else r.blue_goal
 
             r.set_target_state(
                 {
                     # In order to get the angle to an object take the atan2 of the d_x, d_y, then subtract the theta offset to convert it back to the robots local coordinate frame
-                    "theta" : get_angle_to_object((r.x_from_gps, r.y_from_gps), (r.red_goal.x_pos, r.red_goal.y_pos)) - r.theta_offset,
+                    "theta" : get_angle_to_object((r.x_from_gps, r.y_from_gps), (goal.x_pos, goal.y_pos)) - r.theta_offset,
                 }
             )
-
 
         # If the driver is pressing the left button, then turn on aimbot
         if controller_1.buttonLeft.pressing():
@@ -2128,19 +2184,11 @@ def driver_control():
             # Red goal goes not exist yet
             red_goal = vision.take_snapshot(4)
 
-
-
-            print(blue_goal, red_goal)
+            # print(blue_goal, red_goal)
 
             if disc:
                 goal = disc
                 #! THIS MEANS WE WILL SHOOT AT ANY TEAM'S COLOR
-                # if blue_goal:
-                #     goal += blue_goal
-                
-                # if red_goal:
-                #     goal += red_goal
-                
                 
                 # Size of vision sensor screen is 212 vertical and 316 horizontal
                 kP_for_aimbot = 20
@@ -2203,7 +2251,6 @@ def driver_control():
                     "theta" : 180,
                 })
 
-
         # Update the target state of the robot so that in its update() function it does everything there
         r.set_target_state(
             {
@@ -2215,44 +2262,26 @@ def driver_control():
             }
         )
 
+        if controller_1.buttonL1.pressing() and not previous_controller_states["buttonL1"]:
+            r.path.append(r.return_state_of_auto())
+
         # Timer to print things out to the terminal every x seconds
         if (timer.value() > 0.5):
             # Print the flywheel torque
-
-
             # Prints the efficiency of the motors:
-            # print(brain.timer.value(), left_motor_a.efficiency(), right_motor_a.efficiency(), left_motor_b.efficiency(), right_motor_b.efficiency())
-            # print(r.x_from_gps, r.y_from_gps, "THETA IS", get_heading_to_object((r.red_goal.x_pos, r.red_goal.y_pos), (r.x_from_gps, r.y_from_gps)))
-            # print(left_motor_a.velocity(), right_motor_a.velocity(), left_motor_b.velocity(), right_motor_b.velocity())
-            # print(brain.timer.value(), flywheel_motor_1.velocity(PERCENT), flywheel_motor_2.velocity(PERCENT))
-            # print(r.total_theta)
-            # print(r.flywheel_speed, flywheel_motor_1.velocity(PERCENT), r.proportional_term_flywheel_1, r.flywheel_1_voltage_factor, r.derivative_term_flywheel_1)
-            # print(brain.timer.value(), r.flywheel_speed, flywheel_motor_1.velocity(PERCENT), flywheel_motor_2.velocity(PERCENT))
-            # print(brain.timer.value(), flywheel_motor_1.torque(), flywheel_motor_2.torque())
-            # print(brain.timer.value(), flywheel_motor_1.temperature(), flywheel_motor_2.temperature())
-            # print(brain.timer.value(), r.total_updates)
-            
-            # add - 90
-            # vision.largest_object()
-            # blue_goal = vision.take_snapshot(3)
-            # disc = vision.take_snapshot(5)
-            # Red goal goes not exist yet
-            # red_goal = vision.take_snapshot(4)
-            print(f("x", r.x_from_gps, "y", r.y_from_gps, "theta_robot", r.theta, "theta_field", r.theta_field, "theta_field_goal", get_angle_to_object((r.x_from_gps, r.y_from_gps), (r.red_goal.x_pos, r.red_goal.y_pos)), "theta_field_goal_robot", get_angle_to_object((r.x_from_gps, r.y_from_gps), (r.red_goal.x_pos, r.red_goal.y_pos)) - r.theta_offset))
-            # print("blue, red", blue_goal, red_goal, disc)
             controller_1.screen.clear_row(3)
 
             # Display the flywheel speed and the robot theta from [-180 to 180]
-            controller_1.screen.print(f("FLY:", r.flywheel_speed, "ang:", round(r.theta), round(r.theta_field)))
+            controller_1.screen.print(f("FLY:", r.flywheel_speed, "ang:", round(r.theta), len(r.path)))
 
             controller_2.screen.clear_row(3)
-            controller_2.screen.print(f("FLY:", r.flywheel_speed, "ang:", round(r.theta), round(r.theta_field)))
-            # controller_2.screen.print(f("You are controller 2!"))
+            controller_2.screen.print(f("FLY:", r.flywheel_speed, "ang:", round(r.theta)))
             timer.reset()
 
         if controller_2.buttonUp.pressing() and not previous_controller_states_2["buttonUp"] and expansion_timer.value() < (60 + 45 - 11):
             r.set_target_state({
                 "launch_expansion" : True
+
             })
         elif controller_2.buttonDown.pressing():
             r.set_target_state({
@@ -2275,8 +2304,6 @@ def driver_control():
             r.set_target_state({
                 "shoot_disc": 1,
             })
-
-
 
         # When the buttons are pressed to change the level of the flywheel speed, r2 decreases level, l2 increases level
         if controller_1.buttonR2.pressing() and not previous_controller_states["buttonR2"]:
@@ -2367,7 +2394,6 @@ def reset_robot_theta():
     })
     r.total_theta = r.theta_offset 
 
-
 shoot_discs_auto_program = [
     {
         "wait" : 8,
@@ -2379,9 +2405,7 @@ shoot_discs_auto_program = [
     {
         "shoot_disc" : 4,
     },
-
 ]
-
 
 match_auto_three_squares = [
     {
@@ -2415,18 +2439,6 @@ match_auto_three_squares = [
     {
         "shoot_disc" : 3,
     },
-    # {
-    #     "intake_speed" : 0,
-    #     "wait" : 0.5,
-    #     "override_velocity_y" : 30,
-    #     "override_velocity_x" : 0,
-    # },
-    # {
-    #     "theta" : 90,
-    #     "wait" : 1,
-    #     "override_velocity_y" : 0,
-    #     "message" : "Turning 90 degrees..."
-    # },
 ]
 
 match_auto_two_squares = [
@@ -2485,43 +2497,6 @@ match_auto_two_squares = [
         "override_velocity_x" : -5,
         "override_velocity_y" : 45,
     },
-    # {
-    #     "override_velocity_x" : 0,
-    #     "override_velocity_y" : 0,
-    #     "theta" : 180,
-    #     "wait" : 1.4,
-    # },
-    # {
-    #     # At this point we are about to intake a disc
-    #     "wait" : 0.4,
-    #     "override_velocity_x" : 0,
-    #     "override_velocity_y" : 40,
-    #     "intake_speed" : 100,
-    # },
-    # {
-    #     # Moving backwards a bit so we don't get penalized
-    #     "wait" : 0.6,
-    #     "override_velocity_x" : 0,
-    #     "override_velocity_y" : -10,
-    # },
-    # {
-    #     # Turn around
-    #     "theta" : 90,
-    #     "wait" : 1,
-    #     "override_velocity_y" : 0,
-    # },
-    # {
-    #     "setX" : 0,
-    #     "setY" : 0,
-    # },
-    # {
-    #     "override_velocity_x" : 0,
-    #     "override_velocity_y" : 0,
-    # }
-    # {
-    #     # Shoot discs
-    #     "shoot_disc" : 3
-    # },
     {
         "override_velocity_x" : 0,
         "override_velocity_y" : 0,
@@ -2534,8 +2509,6 @@ match_auto_two_squares = [
     }
     
 ]
-
-
 
 auto_test = [
     {
@@ -2734,41 +2707,129 @@ skills_auto = [
         "launch_expansion" : True,
         "wait" : 2,
     }
-    # {
-    #     "message" : "expanding",  
-    #     "launch_expansion" : True,
-    #     "override_velocity_x" : -20,
-    #     "override_velocity_y" : -20,
-    #     "wait" : 1.5,
-    # }
-    # {
-    #     "wait" : 5,
-    #     "message" : "waiting"
-    # },
-    # {
-    #     "message" : "setting up to go to other roller",
-    #     "override_velocity_x" : -20,
-    #     "wait" : 0.5,
-    # },
-    # {
-    #     "message" : "doing 3rd roller"
-    # },
-    # {
-    #     "message" : "doing 4th roller"
-    # }
-    # {
-    #     "override_velocity_x" : 40,
-    #     "override_velocity_y" : 40,
-    #     "intake_speed" : 0,
-    #     "wait" : 0.5,
-    #     "message" : "Moving towards goal",
-    # },
-    # {
-    #     "shoot_disc" : 2,
-    #     "override_velocity_y" : 0,
-    #     "message" : "Shooting disc...",
-    #     "theta" : 20
-    # },
+]
+
+skills_auto = [
+    {
+        # Set the target x, y, and theta positions to None
+        "x_pos" : None,
+        "y_pos" : None,
+        "theta" : None,
+        "auto_intake" : False,
+        "auto_roller" : True,
+        "drone_mode" : True,
+        "override_velocity_theta" : None,
+        "override_velocity_y" : -35,
+        "message" : "Doing rollers...",
+        "wait" : 0.7,
+        "flywheel_speed" : 35.5,
+    },
+    {
+        "roller_spin_for" : 0.5,
+    },
+    {
+        "wait" : 1,
+        "override_velocity_x" : 0,
+        "override_velocity_y" : 37,
+        "override_velocity_theta" : None,
+    },
+    {
+        "override_velocity_y" : 0,
+        "wait" : 0.5,
+    },
+    {
+        "override_velocity_theta" : None,
+        "override_velocity_y" : 0,
+        "wait" : 0.5,
+        "message" : "setting theta to...",
+        "theta" : 90,
+    },
+    {
+        "override_velocity_x" : 35,
+        "wait" : 1.2,
+    },
+    {
+        "override_velocity_x" : 0,
+    },
+    {
+        "theta" : 99,
+        "wait" : 2,
+    },
+    # Shoot flywheel
+    {
+        "shoot_disc" : 1,
+    },
+    {
+        "wait" : 2
+    },
+    {
+        "intake_speed" : 100,
+        "shoot_disc" : 1,
+    },
+    {
+        "theta" : 90,
+        "wait" : 1.5,
+    },
+    {
+        "flywheel_speed" : 0,
+        "override_velocity_x" : -35,
+        "wait" : 2,
+    },
+    {
+        "override_velocity_x" : 0,
+        "wait" : 1,
+        "message" : "your dad",
+    },
+    {
+        "override_velocity_x" : -40,
+        "wait" : 0.5,
+        "message" : "your mom",
+        "intake_speed" : 0,
+    },
+    {
+        "override_velocity_x" : -30,
+        "override_velocity_y" : -5,
+        "wait" : 0.7,
+        "message" : "Doing othe>r rollers",
+    },
+    {
+        "override_velocity_x" : -30,
+        "override_velocity_y" : -5,
+        "wait" : 0.5,
+    },
+    {
+        "override_velocity_x" : -20,
+        "roller_spin_for" : 0.5,
+        "message" : "message 1"
+    },
+    # Moving away from other roller
+    {
+        "override_velocity_x" : 30,
+        "override_velocity_y" : 7,
+        "wait" : 1.3,
+        "message" : "MESSAGE 2",
+        "intake_speed" : 0,
+    },
+    {
+        "override_velocity_x" : 0,
+        "override_velocity_y" : 0,
+        "theta" : 90 - 45,
+        "wait" : 1.5,
+        "message" : "MESSAGE 3"
+    },
+    {
+        "override_velocity_x" : -15,
+        "override_velocity_y" : -20,
+        "wait" : 1.2,
+    },
+    {
+        "override_velocity_x" : 0,
+        "override_velocity_y" : 0,
+    },
+    {
+        "launch_expansion" : True,
+        "wait" : 2,
+    }
 ]
 
 skills_auto_w_expansion = skills_auto.copy()
@@ -2784,6 +2845,7 @@ skills_auto_w_expansion.extend([
     }
 ]
 )
+
 auto_intake_on_forever = [
     {
         "intake_speed" : 100,
@@ -2795,17 +2857,256 @@ auto_intake_on_forever = [
     }
 ]
 
+auto_test_odometry = [
+    {
+        "setX" : 0,
+        "setY" : 0,
+        "override_velocity_x" : None,
+        "override_velocity_y" : None,
+        "override_velocity_theta" : None,
+        "slow_mode" : True,
+    },
+    {
+        "message" : "starting...",
+        "x_pos" : 50,
+    },
+    {
+        "y_pos" : 10,
+    },
+    {
+        "x_pos" : 0,
+        "y_pos" : 0,
+    }
+]
+
+# numbers for auto
+
+# auto_test_odometry = [{'override_velocity_x': 0, 'override_velocity_y': 0, 'x_enc': 6.415854, 'y_enc': 3.605318, 'y_vel': 0.4997095, 'slow_mode': 0, 'x_gps': 0, 'y_gps': 0, 'disc_shot': False, 'roller_spin_for': 0, 'theta_vel': 1.068148, 'intake_speed': 0, 'flywheel_speed': 0, 'is_shooting': False, 'x_vel': 0.4593373, 'y_pos': 3.822226, 'time': 5.275, 'roller_state': 'none', 'drone_mode': False, 'auto_intake': False, 'using_gps': True, 'roller_speed': 0, 'auto_roller': False, 'flywheel_torque': 0, 'x_pos': 6.29269, 'override_velocity_theta': 0, 'autonomous': False, 'roller_and_intake_motor_1_done': True, 'disc_in_intake': False, 'flywheel_1_torque': 0.0, 'roller_and_intake_motor_2_done': True, 'flywheel_2_torque': 0.0, 'launch_expansion': False, 'shoot_disc': 0, 'theta': 357.5889}, {'override_velocity_x': 0, 'override_velocity_y': 0, 'x_enc': 0.3685948, 'y_enc': 2.787498, 'y_vel': -0.04654321, 'slow_mode': 0, 'x_gps': 0, 'y_gps': 0, 'disc_shot': False, 'roller_spin_for': 0, 'theta_vel': 4.028443, 'intake_speed': 0, 'flywheel_speed': 0, 'is_shooting': False, 'x_vel': -1.046118, 'y_pos': 2.68078, 'time': 6.276, 'roller_state': 'none', 'drone_mode': False, 'auto_intake': False, 'using_gps': True, 'roller_speed': 0, 'auto_roller': False, 'flywheel_torque': 0, 'x_pos': 0.2970508, 'override_velocity_theta': 0, 'autonomous': False, 'roller_and_intake_motor_1_done': True, 'disc_in_intake': False, 'flywheel_1_torque': 0.0, 'roller_and_intake_motor_2_done': True, 'flywheel_2_torque': 0.0, 'launch_expansion': False, 'shoot_disc': 0, 'theta': 357.4525}]
+auto_test_odometry = [
+  {
+    "override_velocity_x": None,
+    "override_velocity_y": None,
+    "override_velocity_theta": None,
+    "drone_mode": True,
+    "setY": 0,
+    "setX": 0,
+  },
+   {
+    "launch_expansion": False,
+    "theta": 0.0,
+    "intake_speed": 0,
+    "message":  "This is state # 1 !",
+    "flywheel_speed": 0,
+    "x_pos": 0.0,
+    "y_pos": 0.0,
+  },
+  {
+    "launch_expansion": False,
+    "theta": 0,
+    "intake_speed": 0,
+    "message":  "This is state # 2 !",
+    "flywheel_speed": 0,
+    "x_pos": 0.2069391,
+    "y_pos": -8.058083,
+  },
+  {
+    "roller_spin_for" : 0.5,
+    "message" : "Doing first roller!"
+  },
+  {
+    "launch_expansion": False,
+    "theta": 0,
+    "intake_speed": 0,
+    "message":  "This is state # 3 !",
+    "flywheel_speed": 0,
+    "x_pos": -15.46628,
+    "y_pos": 6.764899,
+  },
+
+  {
+    "launch_expansion": False,
+    "theta": 0,
+    "intake_speed": 0,
+    "message":  "This is state # 4 !",
+    "flywheel_speed": 0,
+    "x_pos": -16.42428,
+    "y_pos": 27.52489,
+  },
+
+  {
+    "launch_expansion": False,
+    "theta": 90,
+    "intake_speed": 0,
+    "message":  "This is state # 5 !",
+    "flywheel_speed": 0,
+    "x_pos": -16.00137,
+    "y_pos": 27.44786,
+  },
+
+  {
+    "launch_expansion": False,
+    "theta": 90,
+    "intake_speed": 0,
+    "message":  "This is state # 6 !",
+    "flywheel_speed": 0,
+    "x_pos": -54.13612,
+    "y_pos": 19.73353,
+  },
+  {
+    "roller_spin_for" : 0.5,
+    "message" : "doing 2nd roller",
+    "flywheel_speed" : 37,
+  },
+  {
+    "launch_expansion": False,
+    "theta": 90,
+    "intake_speed": 0,
+    "message":  "This is state # 7 !",
+    "flywheel_speed": 0,
+    "x_pos": 103.3606,
+    "y_pos": 11.25569,
+  },
+  {
+    "shoot_disc" : 2,
+  },
+  {
+    "launch_expansion": False,
+    "theta": 94.6254,
+    "intake_speed": 0,
+    "message":  "This is state # 8 !",
+    "flywheel_speed": 0,
+    "x_pos": 107.5788,
+    "y_pos": 83.99991,
+  },
+  {
+    "launch_expansion": False,
+    "theta": 98.07637,
+    "intake_speed": 0,
+    "message":  "This is state # 9 !",
+    "flywheel_speed": 0,
+    "x_pos": 148.1853,
+    "y_pos": 141.4892,
+  },
+
+  {
+    "launch_expansion": False,
+    "theta": 90.20062,
+    "intake_speed": 0,
+    "message":  "This is state # 10 !",
+    "flywheel_speed": 0,
+    "x_pos": 208.4599,
+    "y_pos": 145.3344,
+  },
+
+  {
+    "launch_expansion": False,
+    "theta": 269.6742,
+    "intake_speed": 0,
+    "message":  "This is state # 11 !",
+    "flywheel_speed": 0,
+    "x_pos": 207.6695,
+    "y_pos": 144.5286,
+  },
+
+  {
+    "launch_expansion": False,
+    "theta": 269.5572,
+    "intake_speed": 0,
+    "message":  "This is state # 12 !",
+    "flywheel_speed": 0,
+    "x_pos": 227.6175,
+    "y_pos": 227.4424,
+  },
+
+  {
+    "launch_expansion": False,
+    "theta": 269.4325,
+    "intake_speed": 0,
+    "message":  "This is state # 13 !",
+    "flywheel_speed": 0,
+    "x_pos": 241.8063,
+    "y_pos": 229.2068,
+  },
+  {
+    "roller_spin_for" : 0.5,
+    "message" : "Doing 2nd to last roller!"
+  },
+
+  {
+    "launch_expansion": False,
+    "theta": 266.911,
+    "intake_speed": 0,
+    "message":  "This is state # 14 !",
+    "flywheel_speed": 0,
+    "x_pos": 236.6414,
+    "y_pos": 267.655,
+  },
+
+  {
+    "launch_expansion": False,
+    "theta": 269.4912,
+    "intake_speed": 0,
+    "message":  "This is state # 15 !",
+    "flywheel_speed": 0,
+    "x_pos": 196.5936,
+    "y_pos": 270.6379,
+  },
+
+  {
+    "launch_expansion": False,
+    "theta": 181.3344,
+    "intake_speed": 0,
+    "message":  "This is state # 16 !",
+    "flywheel_speed": 0,
+    "x_pos": 202.6748,
+    "y_pos": 270.2423,
+  },
+
+  {
+    "launch_expansion": False,
+    "theta": 178.9622,
+    "intake_speed": 0,
+    "message":  "This is state # 17 !",
+    "flywheel_speed": 0,
+    "x_pos": 207.4853,
+    "y_pos": 291.8685,
+  },
+  {
+    "roller_spin_for" : 0.5,
+    "message" : "Doing last roller!"
+  },
+  {
+    "launch_expansion": False,
+    "theta": 180.7117,
+    "intake_speed": 0,
+    "message":  "This is state # 18 !",
+    "flywheel_speed": 0,
+    "x_pos": 212.2641,
+    "y_pos": 257.5946,
+  },
+
+  {
+    "launch_expansion": False,
+    "theta": 234.1446,
+    "intake_speed": 0,
+    "message":  "This is state # 19 !",
+    "flywheel_speed": 0,
+    "x_pos": 211.8375,
+    "y_pos": 257.0249,
+  },
+]
+
 field_length = 356  # CM
 
 # Initializes a robot object
 r = Robot()
 
+init()
+r.init()
 ######### GUI ######### GUI ######### GUI ######### GUI ######### GUI ######### GUI #########
 
 # Initialize the gui
 gui = GUI()
-
-
 
 # Add all of the gui elements
 gui.add_page([
@@ -2823,11 +3124,16 @@ gui.add_page([
     # Save the path by printing the representation (in the future it can be saved to sd car), 
     Text("", 240, 40, 120, 40, Color.BLACK, lambda: "x: {:.2f}".format(r.x_pos),), 
     Text("", 240, 80, 120, 40, Color.BLACK,lambda: "y: {:.2f}".format(r.y_pos),), 
-    Text("", 240, 120, 120, 40, Color.BLACK, lambda: f("θ:", str(r.theta).split(".")[0]),), 
+    Text("", 240, 120, 120, 40, Color.BLACK, lambda: f("θ:", str(r.theta).split(".")[0]),),
+     
+    Text("", 360, 40, 120, 40, Color.BLACK, lambda: "t_x: {:.2f}".format(r.target_state["x_pos"]),), 
+    Text("", 360, 80, 120, 40, Color.BLACK,lambda: "t_y: {:.2f}".format(r.target_state["y_pos"]),), 
+    Text("", 360, 120, 120, 40, Color.BLACK, lambda: f("t_θ:", str(r.target_state["theta"]).split(".")[0]),),
+
     Button("Go To Debug", 360, 200, 120, 40, (0xAAAAAA), lambda: gui.set_page(1)),
 
     # Auto Selector
-    Switch(["3-Square", "2-Square", "SKILLS", "ShootDiscs", "Intake Forever", "Temp"], 0, 120, 120, 40, [0x33FF33, 0x33CC33, 0x33AA33, 0x339933, 0x337733, 0x335533], lambda auto_mode: r.set_autonomous_procedure(auto_mode), [match_auto_three_squares, match_auto_two_squares, skills_auto, shoot_discs_auto_program, auto_intake_on_forever, auto_test]),
+    Switch(["3-Square", "2-Square", "SKILLS", "ShootDiscs", "Intake Forever", "Temp"], 0, 120, 120, 40, [0x33FF33, 0x33CC33, 0x33AA33, 0x339933, 0x337733, 0x335533], lambda auto_mode: r.set_autonomous_procedure(auto_mode), [match_auto_three_squares, match_auto_two_squares, skills_auto, shoot_discs_auto_program, auto_intake_on_forever, auto_test_odometry]),
     Button("Run auto", 0, 160, 120, 40, (0xAAAAAA), lambda: r.run_autonomous()),
 ])
 
@@ -2843,11 +3149,13 @@ gui.add_page([
     Button("Flywheel -2", 0, 80, 120, 40, (0xAA8888), lambda: r.set_target_state({"flywheel_speed" : r.flywheel_speed - 2,}),),
     Button("Shoot Disc", 0, 120, 120, 40, (0x8888AA), lambda: r.set_target_state({"shoot_disc" : 1,}),),
     
-    Button("Reset θ", 0, 200, 120, 40, (0xAAAAFA), reset_robot_theta), 
+    Button("Reset Theta", 0, 160, 120, 40, (0xAAAAFA), reset_robot_theta), 
     Switch(["GPS", "No GPS"], 120, 160, 120, 40, [Color(0x88AA88), Color(0xAA8888)], [r.set_target_state] * 2, [{"use_gps" : True}, {"use_gps" : False}]),
-    Button("Add to Path", 120, 200, 120, 40, (0xAAFAAA), r.path.append(r.state.copy())),
+   
+    Text("", 0, 200, 120, 40, (Color.BLACK), lambda: f("State #", len(r.path)),), 
+    Button("Add to Path", 120, 200, 120, 40, (0xAAFAAA), lambda: r.path.append(r.return_state_of_auto())),
     # Save the path by printing the representation (in the future it can be saved to sd car), 
-    Button("Save Path", 240, 200, 120, 40, (0xAAAAAA), lambda: print(repr(r.path))),
+    Button("Save Path", 240, 200, 120, 40, (0xAAAAAA), lambda: print_state_nicely(r.path)),
     Text("", 240, 0, 120, 40, (0x110000), lambda: f("SP:", r.flywheel_speed),), 
     Text("", 360, 0, 120, 40, (0x110000), lambda: f("Real:", round(flywheel_motor_1.velocity(PERCENT)), round(flywheel_motor_2.velocity(PERCENT)))), 
     Text("", 240, 40, 120, 40, Color.BLACK, lambda: "x: {:.2f}".format(r.x_pos),), 
@@ -2872,17 +3180,9 @@ gui.add_page([
 gui.pages[2].extend(
     [Switch(["", "X"], 20, y, 30, 30, [Color.RED, Color.GREEN]) for y in range(20, 220, 30)]
 )
-gui.set_page(2)
-
-global debug_position
-debug_position = False
-
+gui.set_page(0)
 
 # aimbot_PID = PID(0.5, 0.01, 0)
-
-init()
-r.init()
-
 
 # Use the robot doctor so that we can diagnose any problems
 # rd = RobotDoctor()
@@ -2892,9 +3192,7 @@ r.init()
 # 30 millisecond wait for the gyroscope to initialize
 wait(30, MSEC)
 
-r.set_autonomous_procedure(skills_auto)
-# r.run_autonomous()
-
+r.set_autonomous_procedure(auto_test_odometry)
 
 def test_drivetrain():
     ### Tests to see how long it takes for the drivetrain to overheat (reach 55 deg.)
@@ -2905,7 +3203,7 @@ def test_drivetrain():
     while True:
         r.set_target_state({
             # Make it so that the robot is constantly rotating
-            "theta" : r.theta + 140
+            "override_theta_velocity" : 100,
         })
 
         if t.value() > 5 + val:
@@ -2924,45 +3222,30 @@ def test_drivetrain():
             return
 
 # test_drivetrain()
-
 # driver_control()
 competition = Competition(driver_control, r.run_autonomous)
 # competition = Competition(driver_control, r.run_autonomous)
 
 # ! PRIORITY
 # TODO: See if changing the acceleration of the robot makes it better to drive
-# TODO: Try grabbing the control by crabbing
-# TODO: Put off drone mode
-# TODO: Test expansion
+# TODO: For competition, be sure to turn on HOLD mode
 # TODO: Add a "neutral" team color, also make sure that the auto orientate towards high goal worksi n a regular match
-# TODO: Roller button for klaudia
+# TODO: Clean up the code for auto-orientate
 # TODO: For the aimbot, make it so that if we are on a specific team, the robot won't accidentally try to shoot at it
-
 # TODO: Test to see if the aimbot gets tricked if there are different colors in the background (like a blue or something)
-
-# TODO: Test removing the derivative term
-
-# TODO: Figure out how accurate the flywheel is without the weights and with the weights
-# TODO: Try to make the flywheel osccilate less
-
-# TODO: Use GPS to automatiically orient the robot to the high goal (and thats it)
-
-# TODO: Test out hold vs. break for driving
-# TODO: Make driving not care about turning speed
-
+# TODO: Test removing the derivative term from the flywheel
+# TODO: Make driving not care about turning speed (so turning speed takes precedence)
+# TODO: Find position of gps in relation to center of robot
 # TODO: Make it so that the robot movement is based off of the gps for now AND THEN add it using the encoders (kinda backwards, ik)
-# TODO: Instead of making the new target position based off of the current state, make it based off of the target state
-
-# TODO: test robot doctor program and use it in the init method if successful
 
 # TODO: Theoretically, shouldn't max acceleration half if we're close to 0 for the motor speed? rework that function
 # TODO: Make a better pose/orienation initialization/resetting tool (initialize the position in the init() command, don't worry if we can't init yet)
+
+# TODO: When the robot initializes, make it rotate towards 90 or 180 degrees exactly (if GPS is on)
 # TODO: Use sensor fusion with Kalman filter for better position
-# TODO: Make it os that the we init the robots orientation based off othe GPS (round it to the nearest 90 or 45 degrees), but make it so that drone mode still works
 # TODO: Make odometry consistent with real world measurements
 
 # TODO: See if we can register callback functions instead of checking things in the updates and see how much that will improve performance
-
 # TODO: Use trapazoids instead of rectangles when integrating the velocity
 
 # * IMPORTANT
@@ -2978,3 +3261,4 @@ competition = Competition(driver_control, r.run_autonomous)
 # TODO: make an auto path class that has information like description, color, etc.
 # TODO: Research how to utilize motor.temperature
 # TODO: Make an info screen that shows if there are any status issues wrong with the robot
+# 2 6 8 14 19
