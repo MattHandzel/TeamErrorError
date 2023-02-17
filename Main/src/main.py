@@ -16,6 +16,9 @@ DEG_TO_RAD = math.pi / 180
 global robot_debug_mode
 robot_debug_mode = False
 
+global recording_autonomous
+recording_autonomous = False
+
 global r2o2
 r2o2 = math.sqrt(2) / 2
 
@@ -64,6 +67,9 @@ DISC_SIGNATURES = [vision__DISC, vision__BRIGHT_DISK]
 
 def set_debug_value(_value):
     one_controller_mode = _value
+
+def start_recording_mode_for_autonomous(_value):
+    recording_autonomous = True
 
 def print_state_nicely(state):
   # print white space so we can see easier when coping and pasting
@@ -1122,6 +1128,9 @@ class Robot:
         theta_field = 0
         alpha = 0
 
+        delta_x_from_gps = 0
+        delta_y_from_gps = 0
+
         # If the gps is being used and not being obstructed
         if self.using_gps and gps.quality() >= 100: 
             
@@ -1150,10 +1159,11 @@ class Robot:
         alpha = 0
         # If we have not moved (from the encoders point of view), and the gps is not changing that much, then use the rolling average from the gps
         # If gps is enabled then the low and high pass filter will make the x and y position more stable, if gps is not enabled then the formula won't use gps data (alpha would equal 0)
-        self.x_pos += delta_x_from_encoders * (1-alpha) + (x_from_gps-self.x_pos) * alpha 
-        self.y_pos += delta_y_from_encoders * (1-alpha) + (y_from_gps-self.y_pos) * alpha
+        self.x_pos += delta_x_from_encoders * (1-alpha) + (delta_x_from_gps-self.x_pos) * alpha 
+        self.y_pos += delta_y_from_encoders * (1-alpha) + (delta_y_from_gps-self.y_pos) * alpha
         
-        self.x_from_gps = x_from_gps
+        gps_alpha = 0.2
+        self.x_from_gps = self.x_from_gps * (1-gps_alpha) + x_from_gps * gps_alpha
         self.y_from_gps = y_from_gps
         self.theta_field = theta_field
 
@@ -1164,7 +1174,7 @@ class Robot:
         # if ((abs(self.state["x_pos"] - self.target_state["x_pos"]) < self.position_tolerance and abs(self.state["y_pos"] - self.target_state["y_pos"]) < self.position_tolerance) \
         #     or (self.state["override_velocity_y"] != None or self.state["override_velocity_x"] != None)):
         
-        target_state_position_tolerance = 2
+        target_state_position_tolerance = 1.5
         target_state_theta_tolerance = 1.5
 
         if self.shoot_disc <= 0 and self["roller_and_intake_motor_1_done"] and self["roller_and_intake_motor_2_done"] and abs(self["x_pos"] - self.target_state["x_pos"]) < target_state_position_tolerance and abs(self["y_pos"] - self.target_state["y_pos"]) < target_state_position_tolerance and abs(self["theta"] - self.target_state["theta"]) < target_state_theta_tolerance:
@@ -1462,8 +1472,15 @@ class Robot:
         self.update()
         self.autonomous_timer.reset()
         self.running_autonomous = True
+        timeout_timer = Timer()
+        timeout_time = 0
         for step in self.autonomous_procedure:
             target_state = {}
+
+            if "timeout" in step.keys():
+                timeout_timer.reset()
+                timeout_time = step["timeout"]
+
             if "setX" in step:
                 self.x_pos = step["setX"]
             if "setY" in step:
@@ -1488,9 +1505,11 @@ class Robot:
                 wait(step["wait"], SECONDS)
 
             # While we haven't reached the target state then just wait
-            while not self.target_reached:
-                wait(0.1, SECONDS)
+            while not self.target_reached and "timeout" in step.keys() and timeout_timer.value() < timeout_time:
+                wait(0.05, SECONDS)
+
         print("DONE WITH AUTONOMOUS")
+
         # After the autonomous mode is over then set the target state to the robot's initial state (so we don't move and turn everything off)
         self.set_target_state(self.initial_state)
         self.running_autonomous = False
@@ -1802,14 +1821,13 @@ class Robot:
             wait(0.01, SECONDS)
 
         self.shoot_disc -= 1
-
         self.is_shooting = False
-        
 
+    
     def status_update(self):
         
         # Indicate to the drivers that the flywheel is ready to be shot
-        if self.flywheel_speed > 0 and abs(flywheel_motor_1.velocity(PERCENT) - self.flywheel_speed) < 2 and abs(flywheel_motor_2.velocity(PERCENT) - self.flywheel_speed) < 2 and self.flywheel_recovery_timer.value() > 0.5:
+        if self.flywheel_speed > 0 and abs(flywheel_motor_1.velocity(PERCENT) - self.flywheel_speed) < 1.5 and abs(flywheel_motor_2.velocity(PERCENT) - self.flywheel_speed) < 1.5 and self.flywheel_recovery_timer.value() > 0.3:
             flywheel_status_light.on()
         else:
             flywheel_status_light.off()
@@ -1846,6 +1864,9 @@ class Robot:
         state["theta"] = round(state["theta"], 1)
 
         return state
+    
+    def save_state(self):
+        self.path.append(self.return_state_of_auto())
 
 class Test:
     '''
@@ -2080,10 +2101,10 @@ def driver_control():
 
         # Render and update the gui before everything else
         # If the joystick hasn't been pressed 
-        new_theta = ((controller_1.axis1.position())) ** 2 * sign(controller_1.axis1.position()) / 100
+        new_theta = ((controller_1.axis1.position())) ** 2 * sign(controller_1.axis1.position()) / 100 * (0.4 if recording_autonomous else 1)
 
-        new_x = ((controller_1.axis4.position())) ** 2 * sign(controller_1.axis4.position()) / 100
-        new_y = ((controller_1.axis3.position())) ** 2 * sign(controller_1.axis3.position()) / 100
+        new_x = ((controller_1.axis4.position())) ** 2 * sign(controller_1.axis4.position()) / 100 * (0.25 if recording_autonomous else 1)
+        new_y = ((controller_1.axis3.position())) ** 2 * sign(controller_1.axis3.position()) / 100 * (0.25 if recording_autonomous else 1)
         
         new_intake = clamp(controller_2.buttonL1.pressing() * 100 - controller_2.buttonR1.pressing() * 100 + controller_1.buttonRight.pressing() * 100, 100, -100)
 
@@ -3154,15 +3175,19 @@ gui.add_page([
     Switch(["GPS", "No GPS"], 120, 160, 120, 40, [Color(0x88AA88), Color(0xAA8888)], [r.set_target_state] * 2, [{"use_gps" : True}, {"use_gps" : False}]),
    
     Text("", 0, 200, 120, 40, (Color.BLACK), lambda: f("State #", len(r.path)),), 
-    Button("Add to Path", 120, 200, 120, 40, (0xAAFAAA), lambda: r.path.append(r.return_state_of_auto())),
+    
+    
+    Button("Add to Path", 120, 200, 120, 40, (0xAAFAAA), lambda: r.save_state),
     # Save the path by printing the representation (in the future it can be saved to sd car), 
     Button("Save Path", 240, 200, 120, 40, (0xAAAAAA), lambda: print_state_nicely(r.path)),
+    
     Text("", 240, 0, 120, 40, (0x110000), lambda: f("SP:", r.flywheel_speed),), 
     Text("", 360, 0, 120, 40, (0x110000), lambda: f("Real:", round(flywheel_motor_1.velocity(PERCENT)), round(flywheel_motor_2.velocity(PERCENT)))), 
     Text("", 240, 40, 120, 40, Color.BLACK, lambda: "x: {:.2f}".format(r.x_pos),), 
     Text("", 240, 80, 120, 40, Color.BLACK,lambda: "y: {:.2f}".format(r.y_pos),), 
     Text("", 240, 120, 120, 40, Color.BLACK, lambda: f("θ:", str(r.theta).split(".")[0]),), 
     Text("", 360, 40, 120, 40, Color.BLACK, lambda: f("T", round(flywheel_motor_1.temperature()), round(flywheel_motor_2.temperature()))),
+    Switch(["Recording: Off", "Recording: On"], 360, 160, 120, 40, [Color.RED, Color.GREEN], lambda v: start_recording_mode_for_autonomous(v), (False, True))
     Button("Go To Comp", 360, 200, 120, 40, (0xAAAAAA), lambda: gui.set_page(0)),
     Text("", 120, 40, 120, 40, Color.BLACK, lambda: f(round(left_motor_a.temperature()), round(left_motor_b.temperature()), round(right_motor_a.temperature()), round(right_motor_b.temperature()))),
 ])
