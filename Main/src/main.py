@@ -17,11 +17,10 @@ global robot_debug_mode
 robot_debug_mode = False
 
 global recording_autonomous
-recording_autonomous = False
+recording_autonomous = True
 
 global r2o2
 r2o2 = math.sqrt(2) / 2
-
 
 # *###### INITIATLIZATION OF PERIPHERALS
 brain = Brain()
@@ -69,7 +68,7 @@ def set_debug_value(_value):
     one_controller_mode = _value
 
 def start_recording_mode_for_autonomous(_value):
-    recording_autonomous = True
+    recording_autonomous = _value
 
 def print_state_nicely(state):
   # print white space so we can see easier when coping and pasting
@@ -105,7 +104,7 @@ def get_angle_to_object(pos_1, pos_2):
 
     return ang
 
-
+# 53
 def init():
     '''
     This function will initialize every subsystem with constants that wont change throughout the competition,
@@ -692,6 +691,9 @@ class Robot:
     # * FLYWHEEL
     length: float = 38.1
 
+    x_from_gps = 0
+    y_from_gps = 0
+    
     # Set the offset for the flywheel from the center of the robot
     flywheel_offset_x = 0   
     flywheel_offset_y = 0
@@ -731,19 +733,20 @@ class Robot:
     drivetrain_gear_ratio = 18
 
     wheel_max_rpm: float = 200
-    wheel_diameter_CM: float = 10.5
+    wheel_diameter_CM: float = 8.255
 
     # In order to get this, it is ticks for the specific gear ratio we're using divided by the circumeference of our wheel
-    wheel_distance_CM_to_TICK_coefficient: float = (drivetrain_gear_ratio / 6 * 300) / (math.pi * wheel_diameter_CM) * 0.45
+    wheel_distance_CM_to_TICK_coefficient: float = (drivetrain_gear_ratio / 6 * 300) / (math.pi * wheel_diameter_CM) * 0.47
 
     # * PID controllers
 
     flywheel_motor_1_average_output = 0
     flywheel_motor_2_average_output = 0 
 
+    autonomous_speed = 0.48
     
     # * MISC
-    update_loop_delay = 0.01  # 10 ms
+    update_loop_delay = 0.001  # 10 ms
 
     # Used to keep track of time in auto and driver mode respectively, use it for nicely logging data, can be used during either modes for end game/pathfinding rules
     autonomous_timer = Timer()
@@ -759,19 +762,20 @@ class Robot:
 
     flywheel_speed_levels = [
         0,
-        round(35.00000001),
-        round(37.333333344),
-        round(39.666666678000006),
-        round(42.000000012),
-        round(44.333333346),
-        round(46.666666680000006),
-        round(49.000000014),
-        round(51.333333348000004),
-        round(53.666666682000006),
-        60,
-        70,
-        80,
-        100
+        33,
+        34,
+        round(35.0000000),
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        45,
+        46,
+        100,
     ]
 
     
@@ -793,6 +797,8 @@ class Robot:
         "theta" : 0,
         "theta_vel" : 0,
         "time" : 0,
+
+        "autonomous_speed" : 0,
 
         # override velocities
         "override_velocity_x" : 0,
@@ -853,8 +859,9 @@ class Robot:
     path = [
         # Initial state of the robot
         {
-        "setX" : 0,
-        "setY" : 0,
+        "set_x" : 0,
+        "set_y" : 0,
+        "set_theta" : 0,
         "override_velocity_x" : None,
         "override_velocity_y" : None,
         "override_velocity_theta" : None,
@@ -979,15 +986,15 @@ class Robot:
         if self.target_state["theta"] != None:
             delta_theta = self.target_state["theta"] - self.theta
 
-
         # Turn via the shortest path
         if delta_theta > 180:
             delta_theta -= 360
         elif delta_theta < -180:
             delta_theta += 360
 
-        orientation_tolerance = 10
-        position_tolerance = 8
+        orientation_tolerance = 9
+        position_tolerance = 15
+
         # Make sqrt the delta theta, so that the tolerance is not linear but a sqrt relationshup
         delta_theta = math.sqrt(abs(delta_theta)) * sign(delta_theta) 
 
@@ -995,12 +1002,16 @@ class Robot:
         # target_x_vel = ((clamp(delta_x, position_tolerance, -position_tolerance) * 100 / position_tolerance) ** 2) / 100 * sign(delta_x) * (0.3 if self.running_autonomous else 1)
         # target_y_vel = ((clamp(delta_y, position_tolerance, -position_tolerance) * 100 / position_tolerance) ** 2) / 100 * sign(delta_y) * (0.1 if self.running_autonomous else 1)
         
-        target_x_vel = ((clamp(delta_x, position_tolerance, -position_tolerance) * 100 / position_tolerance) ** 2) / 100 * sign(delta_x) * (0.3 if self.running_autonomous else 1)
-        target_y_vel = ((clamp(delta_y, position_tolerance, -position_tolerance) * 100 / position_tolerance) ** 2) / 100 * sign(delta_y) * (0.3 if self.running_autonomous else 1)
+        # target_x_vel = ((clamp(delta_x, position_tolerance, -position_tolerance) * 100 / position_tolerance) ** 2) / 100 * sign(delta_x) * (0.5 if self.running_autonomous else 1)
+        # target_y_vel = ((clamp(delta_y, position_tolerance, -position_tolerance) * 100 / position_tolerance) ** 2) / 100 * sign(delta_y) * (0.5 if self.running_autonomous else 1)
         
+        target_y_vel = clamp(delta_y, position_tolerance, -position_tolerance) * 100/position_tolerance * (self.autonomous_speed if self.running_autonomous else 1)
+        target_x_vel = clamp(delta_x, position_tolerance, -position_tolerance) * 100/position_tolerance * (self.autonomous_speed if self.running_autonomous else 1)
+
         
-        target_theta_vel = ((clamp(delta_theta, orientation_tolerance, -orientation_tolerance) * 100 / (orientation_tolerance - 2)) ** 2) / 100 * sign(delta_theta) * (0.3 if self.running_autonomous else 1)
+        target_theta_vel = ((clamp(delta_theta, orientation_tolerance, -orientation_tolerance) * 100 / (orientation_tolerance - 2)) ** 2) / 100 * sign(delta_theta) * (1 if self.running_autonomous else 1)
         
+
         if self.target_state["override_velocity_x"] != None:
             target_x_vel = self.target_state["override_velocity_x"]
         if self.target_state["override_velocity_y"] != None:
@@ -1174,8 +1185,8 @@ class Robot:
         # if ((abs(self.state["x_pos"] - self.target_state["x_pos"]) < self.position_tolerance and abs(self.state["y_pos"] - self.target_state["y_pos"]) < self.position_tolerance) \
         #     or (self.state["override_velocity_y"] != None or self.state["override_velocity_x"] != None)):
         
-        target_state_position_tolerance = 1.5
-        target_state_theta_tolerance = 1.5
+        target_state_position_tolerance = 0.5
+        target_state_theta_tolerance = 0.7
 
         if self.shoot_disc <= 0 and self["roller_and_intake_motor_1_done"] and self["roller_and_intake_motor_2_done"] and abs(self["x_pos"] - self.target_state["x_pos"]) < target_state_position_tolerance and abs(self["y_pos"] - self.target_state["y_pos"]) < target_state_position_tolerance and abs(self["theta"] - self.target_state["theta"]) < target_state_theta_tolerance:
             self.target_reached = True
@@ -1339,6 +1350,8 @@ class Robot:
             self.shoot_disc = _state["shoot_disc"]
         if "roller_spin_for" in _state:
             self["roller_spin_for"] = _state["roller_spin_for"]
+        if "autonomous_speed" in _state:
+            self["autonomous_speed"] = _state["autonomous_speed"]
 
 
     def __setitem__(self, key, value):
@@ -1459,9 +1472,9 @@ class Robot:
         '''
         Given an autonomous procedure, this function will run the procedure
         procedure has very important requirements optional params:
-            setX - sets the x position of the robot
-            setY - sets the y position of the robot
-            setTheta - sets the theta of the robot
+            set_x - sets the x position of the robot
+            set_y - sets the y position of the robot
+            set_theta - sets the theta of the robot
             other params - any other param that is passed that is a key in the robot's state sets the target state of the robot to that value
 
         '''
@@ -1472,19 +1485,22 @@ class Robot:
         self.update()
         self.autonomous_timer.reset()
         self.running_autonomous = True
-        timeout_timer = Timer()
-        timeout_time = 0
+        # timeout_timer = Timer()
+        # timeout_time = 0
         for step in self.autonomous_procedure:
+            print("we are doing, ", step)
             target_state = {}
 
-            if "timeout" in step.keys():
-                timeout_timer.reset()
-                timeout_time = step["timeout"]
+            # if "timeout" in step.keys():
+            #     timeout_timer.reset()
+            #     timeout_time = step["timeout"]
 
-            if "setX" in step:
-                self.x_pos = step["setX"]
-            if "setY" in step:
-                self.y_pos = step["setY"]
+            if "set_x" in step:
+                self.x_pos = step["set_x"]
+            if "set_y" in step:
+                self.y_pos = step["set_y"]
+            if "set_theta" in step:
+                self.total_theta = step["set_theta"]
             
             for key in step.keys():
                 if key in self.state.keys():
@@ -1497,7 +1513,7 @@ class Robot:
             if "funcs" in step.keys():
                 for func in step["funcs"]:
                     func()
-            
+            print("target state is", target_state)
             self.set_target_state(target_state)
 
             if "wait" in step.keys():
@@ -1505,9 +1521,9 @@ class Robot:
                 wait(step["wait"], SECONDS)
 
             # While we haven't reached the target state then just wait
-            while not self.target_reached and "timeout" in step.keys() and timeout_timer.value() < timeout_time:
+            while not self.target_reached:
+                # print("WE ARE WAITING...", self.shoot_disc <= 0, self["roller_and_intake_motor_1_done"], self["roller_and_intake_motor_2_done"], abs(self["x_pos"] - self.target_state["x_pos"]) < 0.3, abs(self["y_pos"] - self.target_state["y_pos"]) < 0.3, abs(self["theta"] - self.target_state["theta"]))
                 wait(0.05, SECONDS)
-
         print("DONE WITH AUTONOMOUS")
 
         # After the autonomous mode is over then set the target state to the robot's initial state (so we don't move and turn everything off)
@@ -1672,6 +1688,15 @@ class Robot:
     @slow_mode.setter
     def slow_mode(self, _slow_mode):
         self.state["slow_mode"] = _slow_mode
+
+    @property
+    def autonomous_speed(self):
+        return self.state["autonomous_speed"]
+    
+    @autonomous_speed.setter
+    def autonomous_speed(self, _autonomous_speed):
+        self.state["autonomous_speed"] = _autonomous_speed
+    
     
     def get_current_wheel_encoder_values(self):
         '''
@@ -1779,7 +1804,7 @@ class Robot:
 
         flywheel_motor_1.spin(FORWARD, clamp(target_flywheel_output_1, MAX_VOLTAGE, -MAX_VOLTAGE), VOLT)
         flywheel_motor_2.spin(FORWARD, clamp(target_flywheel_output_2, MAX_VOLTAGE, -MAX_VOLTAGE), VOLT)
-        print(brain.timer.value(), flywheel_motor_1.velocity(PERCENT), flywheel_motor_2.velocity(PERCENT), target_flywheel_output_1, target_flywheel_output_2, int(self.is_shooting) * 35)
+        # print(brain.timer.value(), flywheel_motor_1.velocity(PERCENT), flywheel_motor_2.velocity(PERCENT), target_flywheel_output_1, target_flywheel_output_2, int(self.is_shooting) * 35)
 
         self.flywheel_motor_1_error = (self.flywheel_1_avg_speed - self.previous_flywheel_1_avg_speed)
         self.flywheel_motor_2_error = (self.flywheel_2_avg_speed - self.previous_flywheel_2_avg_speed)
@@ -2101,12 +2126,12 @@ def driver_control():
 
         # Render and update the gui before everything else
         # If the joystick hasn't been pressed 
-        new_theta = ((controller_1.axis1.position())) ** 2 * sign(controller_1.axis1.position()) / 100 * (0.4 if recording_autonomous else 1)
+        new_theta = ((controller_1.axis1.position())) ** 2 * sign(controller_1.axis1.position()) / 100 * (0.7 if recording_autonomous else 1)
 
         new_x = ((controller_1.axis4.position())) ** 2 * sign(controller_1.axis4.position()) / 100 * (0.25 if recording_autonomous else 1)
         new_y = ((controller_1.axis3.position())) ** 2 * sign(controller_1.axis3.position()) / 100 * (0.25 if recording_autonomous else 1)
         
-        new_intake = clamp(controller_2.buttonL1.pressing() * 100 - controller_2.buttonR1.pressing() * 100 + controller_1.buttonRight.pressing() * 100, 100, -100)
+        new_intake = clamp(controller_2.buttonL1.pressing() * 100 - controller_2.buttonR1.pressing() * 100 + controller_1.buttonLeft.pressing() * 100, 100, -100)
 
         if controller_2.buttonLeft.pressing():
             new_intake = None
@@ -2161,7 +2186,7 @@ def driver_control():
                 }
             )
         
-        if controller_1.buttonDown.pressing():
+        if controller_1.buttonRight.pressing():
             new_theta = None
             reset_robot_theta()
 
@@ -2277,6 +2302,9 @@ def driver_control():
                     "theta" : 180,
                 })
 
+        if recording_autonomous:
+            new_theta = None
+
         # Update the target state of the robot so that in its update() function it does everything there
         r.set_target_state(
             {
@@ -2292,13 +2320,13 @@ def driver_control():
             r.path.append(r.return_state_of_auto())
 
         # Timer to print things out to the terminal every x seconds
-        if (timer.value() > 0.5):
+        if (timer.value() > 0.1):
             # Print the flywheel torque
             # Prints the efficiency of the motors:
             controller_1.screen.clear_row(3)
-
+            print(left_motor_a.velocity(PERCENT), left_motor_b.velocity(PERCENT), right_motor_a.velocity(PERCENT), right_motor_b.velocity(PERCENT))
             # Display the flywheel speed and the robot theta from [-180 to 180]
-            controller_1.screen.print(f("FLY:", r.flywheel_speed, "ang:", round(r.theta), len(r.path)))
+            controller_1.screen.print(f("FLY:", r.flywheel_speed, "ang:", round(r.theta, 1), len(r.path)))
 
             controller_2.screen.clear_row(3)
             controller_2.screen.print(f("FLY:", r.flywheel_speed, "ang:", round(r.theta)))
@@ -2414,7 +2442,7 @@ def reset_robot_theta():
     r.set_target_state({
         "theta" : 0
     })
-    r.total_theta = r.theta_offset 
+    r.total_theta = 0
 
 shoot_discs_auto_program = [
     {
@@ -2530,23 +2558,6 @@ match_auto_two_squares = [
         "funcs" : [reset_robot_theta],
     }
     
-]
-
-auto_test = [
-    {
-        "x_pos" : None,
-        "y_pos" : None,
-        "theta" : None,
-        "auto_roller" : False,
-        "auto_intake" : False,
-        "roller_spin_for" : 0,
-        "message" : "init",
-    },
-    {
-        "message" : "spinning",
-        "roller_spin_for" : 0.5,
-    },
-
 ]
 
 skills_auto = [
@@ -2878,244 +2889,258 @@ auto_intake_on_forever = [
         "wait" : 999
     }
 ]
-
 auto_test_odometry = [
     {
-        "setX" : 0,
-        "setY" : 0,
-        "override_velocity_x" : None,
-        "override_velocity_y" : None,
-        "override_velocity_theta" : None,
-        "slow_mode" : True,
+        "override_velocity_theta": None,
+        "drone_mode": True,
+        "override_velocity_x": None,
+        "override_velocity_y": None,
+        "set_x": 0,
+        "set_y": 0,
+        "set_theta": 0,
     },
     {
-        "message" : "starting...",
-        "x_pos" : 50,
+        "launch_expansion": False,
+        "theta": 360,
+        "intake_speed": 0,
+        "message": "Move towards the rollers",
+        "flywheel_speed": 0,
+        "x_pos": -4,
+        "y_pos": -16.6,
     },
     {
-        "y_pos" : 10,
+        "roller_spin_for" : 0.5,
+        "wait" : 2,
     },
     {
-        "x_pos" : 0,
-        "y_pos" : 0,
+        "x_pos": 0.1,
+        "y_pos": 6.4,
+    },
+    {
+        "launch_expansion": False,
+        "theta": 90.2,
+        "intake_speed": 0,
+        "message": "This is state #3!",
+        "flywheel_speed": 0,
+        "x_pos": 0.1,
+        "y_pos": 6.4,
+    },
+    {
+        "launch_expansion": False,
+        "theta": 90,
+        "intake_speed": 0,
+        "message": "This is state #4!",
+        "flywheel_speed": 0,
+        "x_pos": -16.1,
+        "y_pos": -5.5,
+    },
+    {
+        "launch_expansion": False,
+        "theta": 92,
+        "intake_speed": 0,
+        "message": "This is state #5!",
+        "flywheel_speed": 0,
+        "x_pos": -62,
+        "y_pos": 8.5,
+    },
+    {
+        "roller_spin_for" : 0.5,
+    },
+    {
+        "flywheel_speed": 34,
+    },
+    {
+        "launch_expansion": False,
+        "theta": 89.7,
+        "intake_speed": 0,
+        "message": "This is state #3!",
+        "flywheel_speed": 34,
+        "x_pos": 105.0,
+        "y_pos": 3.8,
+    },
+    {
+        "flywheel_speed" : 34,
+        "theta" : 92.5,
+    },
+    {
+        "shoot_disc" : 1,
+    },
+    {
+        "wait" : 1,
+    },
+    {
+        "shoot_disc" : 1,
+    },
+    {
+        "launch_expansion": False,
+        "theta": 360,
+        "intake_speed": 0,
+        "message": "This is state #1!",
+        "flywheel_speed": 0,
+        "x_pos": 102.6,
+        "y_pos": 4.5,
+    },
+    {
+        "launch_expansion": False,
+        "intake_speed": 0,
+        "message": "This is state #2!",
+        "flywheel_speed": 0,
+        "x_pos": 80,
+        "y_pos": 80,
+    },
+    {
+        "theta": 225.0,
+    },
+    {
+        "autonomous_speed" : 0.2,
+        "launch_expansion": False,
+        "theta": 225,
+        "intake_speed": 100,
+        "message": "This is state #4!",
+        "flywheel_speed": 0,
+        "x_pos": 164,
+        "y_pos": 164,
+    },
+    {
+        "autonomous_speed" : 0.48,
+    },
+    {
+        "theta" : 180
+    },
+    {
+        "launch_expansion": False,
+        "intake_speed": 0,
+        "message": "This is state #1!",
+        "flywheel_speed": 0,
+        "x_pos": 162.0,
+        "y_pos": 163.8,
+    },
+
+    {
+        "launch_expansion": False,
+        "intake_speed": 0,
+        "message": "This is state #2!",
+        "flywheel_speed": 35,
+        "x_pos": 197.4,
+        "y_pos": 164.8,
+    },
+    {
+        "launch_expansion": False,
+        "theta": 180,
+        "intake_speed": 0,
+        "message": "This is state #3!",
+        "flywheel_speed": 35,
+        "x_pos": 197.0,
+        "y_pos": 164.1,
+    },
+    {
+        "launch_expansion": False,
+        "theta": 180.5,
+        "intake_speed": 0,
+        "message": "This is state #4!",
+        "flywheel_speed": 35,
+        "x_pos": 196.5,
+        "y_pos": 120,
+    },
+    {
+        "shoot_disc" : 1,
+    },
+    {
+        "wait" : 1,
+    },
+    {
+        "shoot_disc" : 1,
+    },
+    {
+        "wait" : 1,
+    },
+    {
+        "shoot_disc" : 1,
+    },
+    {
+        "launch_expansion": False,
+        "theta": 270.4,
+        "intake_speed": 0,
+        "message": "This is state #1!",
+        "flywheel_speed": 0,
+        "x_pos": 193.8,
+        "y_pos": 120.9,
+    },
+
+    {
+        "launch_expansion": False,
+        "theta": 269.6,
+        "intake_speed": 0,
+        "message": "This is state #2!",
+        "flywheel_speed": 0,
+        "x_pos": 225.0,
+        "y_pos": 217.8,
+    },
+    {
+        "roller_spin_for" : 0.5,
+    }
+
+    {
+        "launch_expansion": False,
+        "theta": 269.9,
+        "intake_speed": 0,
+        "message": "This is state #3!",
+        "flywheel_speed": 0,
+        "x_pos": 176.1,
+        "y_pos": 217.8,
+    },
+
+    {
+        "launch_expansion": False,
+        "theta": 180.1,
+        "intake_speed": 0,
+        "message": "This is state #4!",
+        "flywheel_speed": 0,
+        "x_pos": 176.7,
+        "y_pos": 217.1,
+    },
+
+    {
+        "launch_expansion": False,
+        "theta": 180.1,
+        "intake_speed": 0,
+        "message": "This is state #5!",
+        "flywheel_speed": 0,
+        "x_pos": 169.5,
+        "y_pos": 244.4,
+    },
+
+    {
+        "launch_expansion": False,
+        "theta": 180.5,
+        "intake_speed": 0,
+        "message": "This is state #6!",
+        "flywheel_speed": 0,
+        "x_pos": 168.2,
+        "y_pos": 277.5,
+    },
+    {
+        "roller_spin_for" : 0.5,
     }
 ]
 
-# numbers for auto
-
-# auto_test_odometry = [{'override_velocity_x': 0, 'override_velocity_y': 0, 'x_enc': 6.415854, 'y_enc': 3.605318, 'y_vel': 0.4997095, 'slow_mode': 0, 'x_gps': 0, 'y_gps': 0, 'disc_shot': False, 'roller_spin_for': 0, 'theta_vel': 1.068148, 'intake_speed': 0, 'flywheel_speed': 0, 'is_shooting': False, 'x_vel': 0.4593373, 'y_pos': 3.822226, 'time': 5.275, 'roller_state': 'none', 'drone_mode': False, 'auto_intake': False, 'using_gps': True, 'roller_speed': 0, 'auto_roller': False, 'flywheel_torque': 0, 'x_pos': 6.29269, 'override_velocity_theta': 0, 'autonomous': False, 'roller_and_intake_motor_1_done': True, 'disc_in_intake': False, 'flywheel_1_torque': 0.0, 'roller_and_intake_motor_2_done': True, 'flywheel_2_torque': 0.0, 'launch_expansion': False, 'shoot_disc': 0, 'theta': 357.5889}, {'override_velocity_x': 0, 'override_velocity_y': 0, 'x_enc': 0.3685948, 'y_enc': 2.787498, 'y_vel': -0.04654321, 'slow_mode': 0, 'x_gps': 0, 'y_gps': 0, 'disc_shot': False, 'roller_spin_for': 0, 'theta_vel': 4.028443, 'intake_speed': 0, 'flywheel_speed': 0, 'is_shooting': False, 'x_vel': -1.046118, 'y_pos': 2.68078, 'time': 6.276, 'roller_state': 'none', 'drone_mode': False, 'auto_intake': False, 'using_gps': True, 'roller_speed': 0, 'auto_roller': False, 'flywheel_torque': 0, 'x_pos': 0.2970508, 'override_velocity_theta': 0, 'autonomous': False, 'roller_and_intake_motor_1_done': True, 'disc_in_intake': False, 'flywheel_1_torque': 0.0, 'roller_and_intake_motor_2_done': True, 'flywheel_2_torque': 0.0, 'launch_expansion': False, 'shoot_disc': 0, 'theta': 357.4525}]
-auto_test_odometry = [
-  {
-    "override_velocity_x": None,
-    "override_velocity_y": None,
-    "override_velocity_theta": None,
-    "drone_mode": True,
-    "setY": 0,
-    "setX": 0,
-  },
-   {
-    "launch_expansion": False,
-    "theta": 0.0,
-    "intake_speed": 0,
-    "message":  "This is state # 1 !",
-    "flywheel_speed": 0,
-    "x_pos": 0.0,
-    "y_pos": 0.0,
-  },
-  {
-    "launch_expansion": False,
-    "theta": 0,
-    "intake_speed": 0,
-    "message":  "This is state # 2 !",
-    "flywheel_speed": 0,
-    "x_pos": 0.2069391,
-    "y_pos": -8.058083,
-  },
-  {
-    "roller_spin_for" : 0.5,
-    "message" : "Doing first roller!"
-  },
-  {
-    "launch_expansion": False,
-    "theta": 0,
-    "intake_speed": 0,
-    "message":  "This is state # 3 !",
-    "flywheel_speed": 0,
-    "x_pos": -15.46628,
-    "y_pos": 6.764899,
-  },
-  {
-        "launch_expansion": False, 
-        "theta": 0,
-    "intake_speed": 0,
-    "message":  "This is state # 4 !",
-    "flywheel_speed": 0,
-    "x_pos": -16.42428,
-    "y_pos": 27.52489,
-  },
-
-  {
-    "launch_expansion": False,
-    "theta": 90,
-    "intake_speed": 0,
-    "message":  "This is state # 5 !",
-    "flywheel_speed": 0,
-    "x_pos": -16.00137,
-    "y_pos": 27.44786,
-  },
-
-  {
-    "launch_expansion": False,
-    "theta": 90,
-    "intake_speed": 0,
-    "message":  "This is state # 6 !",
-    "flywheel_speed": 0,
-    "x_pos": -54.13612,
-    "y_pos": 19.73353,
-  },
-  {
-    "roller_spin_for" : 0.5,
-    "message" : "doing 2nd roller",
-    "flywheel_speed" : 37,
-  },
-  {
-    "launch_expansion": False,
-    "theta": 90,
-    "intake_speed": 0,
-    "message":  "This is state # 7 !",
-    "flywheel_speed": 0,
-    "x_pos": 103.3606,
-    "y_pos": 11.25569,
-  },
-  {
-    "shoot_disc" : 2,
-  },
-  {
-    "launch_expansion": False,
-    "theta": 94.6254,
-    "intake_speed": 0,
-    "message":  "This is state # 8 !",
-    "flywheel_speed": 0,
-    "x_pos": 107.5788,
-    "y_pos": 83.99991,
-  },
-  {
-    "launch_expansion": False,
-    "theta": 98.07637,
-    "intake_speed": 0,
-    "message":  "This is state # 9 !",
-    "flywheel_speed": 0,
-    "x_pos": 148.1853,
-    "y_pos": 141.4892,
-  },
-
-  {
-    "launch_expansion": False,
-    "theta": 90.20062,
-    "intake_speed": 0,
-    "message":  "This is state # 10 !",
-    "flywheel_speed": 0,
-    "x_pos": 208.4599,
-    "y_pos": 145.3344,
-  },
-
-  {
-    "launch_expansion": False,
-    "theta": 269.6742,
-    "intake_speed": 0,
-    "message":  "This is state # 11 !",
-    "flywheel_speed": 0,
-    "x_pos": 207.6695,
-    "y_pos": 144.5286,
-  },
-
-  {
-    "launch_expansion": False,
-    "theta": 269.5572,
-    "intake_speed": 0,
-    "message":  "This is state # 12 !",
-    "flywheel_speed": 0,
-    "x_pos": 227.6175,
-    "y_pos": 227.4424,
-  },
-
-  {
-    "launch_expansion": False,
-    "theta": 269.4325,
-    "intake_speed": 0,
-    "message":  "This is state # 13 !",
-    "flywheel_speed": 0,
-    "x_pos": 241.8063,
-    "y_pos": 229.2068,
-  },
-  {
-    "roller_spin_for" : 0.5,
-    "message" : "Doing 2nd to last roller!"
-  },
-
-  {
-    "launch_expansion": False,
-    "theta": 266.911,
-    "intake_speed": 0,
-    "message":  "This is state # 14 !",
-    "flywheel_speed": 0,
-    "x_pos": 236.6414,
-    "y_pos": 267.655,
-  },
-
-  {
-    "launch_expansion": False,
-    "theta": 269.4912,
-    "intake_speed": 0,
-    "message":  "This is state # 15 !",
-    "flywheel_speed": 0,
-    "x_pos": 196.5936,
-    "y_pos": 270.6379,
-  },
-
-  {
-    "launch_expansion": False,
-    "theta": 181.3344,
-    "intake_speed": 0,
-    "message":  "This is state # 16 !",
-    "flywheel_speed": 0,
-    "x_pos": 202.6748,
-    "y_pos": 270.2423,
-  },
-
-  {
-    "launch_expansion": False,
-    "theta": 178.9622,
-    "intake_speed": 0,
-    "message":  "This is state # 17 !",
-    "flywheel_speed": 0,
-    "x_pos": 207.4853,
-    "y_pos": 291.8685,
-  },
-  {
-    "roller_spin_for" : 0.5,
-    "message" : "Doing last roller!"
-  },
-  {
-    "launch_expansion": False,
-    "theta": 180.7117,
-    "intake_speed": 0,
-    "message":  "This is state # 18 !",
-    "flywheel_speed": 0,
-    "x_pos": 212.2641,
-    "y_pos": 257.5946,
-  },
-
-  {
-    "launch_expansion": False,
-    "theta": 234.1446,
-    "intake_speed": 0,
-    "message":  "This is state # 19 !",
-    "flywheel_speed": 0,
-    "x_pos": 211.8375,
-    "y_pos": 257.0249,
-  },
+auto_test = [
+    {
+        "override_velocity_theta": None,
+        "drone_mode": True,
+        "override_velocity_x": None,
+        "override_velocity_y": None,
+        "set_x": 0,
+        "set_y": 0,
+        "set_theta": 0,
+    },
+    {
+        "autonomous_speed" : 0.25,
+        "y_pos" : 20,
+    },
 ]
+
+
 
 field_length = 356  # CM
 
@@ -3154,7 +3179,7 @@ gui.add_page([
     Button("Go To Debug", 360, 200, 120, 40, (0xAAAAAA), lambda: gui.set_page(1)),
 
     # Auto Selector
-    Switch(["3-Square", "2-Square", "SKILLS", "ShootDiscs", "Intake Forever", "Temp"], 0, 120, 120, 40, [0x33FF33, 0x33CC33, 0x33AA33, 0x339933, 0x337733, 0x335533], lambda auto_mode: r.set_autonomous_procedure(auto_mode), [match_auto_three_squares, match_auto_two_squares, skills_auto, shoot_discs_auto_program, auto_intake_on_forever, auto_test_odometry]),
+    Switch(["3-Square", "2-Square", "SKILLS", "ShootDiscs", "Intake Forever", "Temp", "Test"], 0, 120, 120, 40, [0x33FF33, 0x33CC33, 0x33AA33, 0x339933, 0x337733, 0x335533,0x333333], lambda auto_mode: r.set_autonomous_procedure(auto_mode), [match_auto_three_squares, match_auto_two_squares, skills_auto, shoot_discs_auto_program, auto_intake_on_forever, auto_test_odometry, auto_test]),
     Button("Run auto", 0, 160, 120, 40, (0xAAAAAA), lambda: r.run_autonomous()),
     Switch(["2-Controller", "1-Controller"], 240, 160, 120, 80, [0xCCAAAA, 0xCCAACC], lambda value: set_debug_value(value), (False, True))
 ])
@@ -3187,7 +3212,7 @@ gui.add_page([
     Text("", 240, 80, 120, 40, Color.BLACK,lambda: "y: {:.2f}".format(r.y_pos),), 
     Text("", 240, 120, 120, 40, Color.BLACK, lambda: f("θ:", str(r.theta).split(".")[0]),), 
     Text("", 360, 40, 120, 40, Color.BLACK, lambda: f("T", round(flywheel_motor_1.temperature()), round(flywheel_motor_2.temperature()))),
-    Switch(["Recording: Off", "Recording: On"], 360, 160, 120, 40, [Color.RED, Color.GREEN], lambda v: start_recording_mode_for_autonomous(v), (False, True))
+    Switch(["Recording: Off", "Recording: On"], 360, 160, 120, 40, [Color.RED, Color.GREEN], lambda v: start_recording_mode_for_autonomous(v), (False, True)),
     Button("Go To Comp", 360, 200, 120, 40, (0xAAAAAA), lambda: gui.set_page(0)),
     Text("", 120, 40, 120, 40, Color.BLACK, lambda: f(round(left_motor_a.temperature()), round(left_motor_b.temperature()), round(right_motor_a.temperature()), round(right_motor_b.temperature()))),
 ])
@@ -3250,6 +3275,10 @@ def test_drivetrain():
 competition = Competition(driver_control, r.run_autonomous)
 
 # ! PRIORITY
+# TODO: Figure out why the robot's encoders are reading a greater value than they actually are
+# TODO: Use accel/encoders to figure out when the robot is stopped?!?!?
+# TODO: Create some sort of timeout
+# TODO: Make thingy that detects when robot stops and if that happens then continue the autonomous mode.
 # TODO: For competition, be sure to turn on HOLD mode
 # TODO: Make autonomous mode follow the same velocity vector as during the recording???
 
