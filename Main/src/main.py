@@ -17,7 +17,7 @@ global robot_debug_mode
 robot_debug_mode = False
 
 global recording_autonomous
-recording_autonomous = True
+recording_autonomous = False
 
 global r2o2
 r2o2 = math.sqrt(2) / 2
@@ -68,6 +68,8 @@ def set_debug_value(_value):
     one_controller_mode = _value
 
 def start_recording_mode_for_autonomous(_value):
+    print("I HAVE BEEN PRESSED AND MY VAL IS", _value)
+    global recording_autonomous 
     recording_autonomous = _value
 
 def print_state_nicely(state):
@@ -743,10 +745,10 @@ class Robot:
     flywheel_motor_1_average_output = 0
     flywheel_motor_2_average_output = 0 
 
-    autonomous_speed = 0.48
+    autonomous_speed: float = 0.48
     
     # * MISC
-    update_loop_delay = 0.001  # 10 ms
+    update_loop_delay = 0.01  # 10 ms
 
     # Used to keep track of time in auto and driver mode respectively, use it for nicely logging data, can be used during either modes for end game/pathfinding rules
     autonomous_timer = Timer()
@@ -778,8 +780,6 @@ class Robot:
         100,
     ]
 
-    
-    
     # State dictionary will hold ALL information about the robot
     '''
         x_pos: X position of the robot
@@ -882,7 +882,7 @@ class Robot:
         self.max_velocity = ((self.wheel_max_rpm / 60) *
                              math.pi * 2 * self.wheel_diameter_CM / math.sqrt(2))
         # This number in the divisor means it will speedup/slow down in that many seeconds
-        self.max_acceleration = 2 * self.max_velocity / 0.001
+        self.max_acceleration = 2 * self.max_velocity / 0.00001
 
         # Set origin of the gps
         gps.set_origin(0,0)
@@ -1008,9 +1008,9 @@ class Robot:
         target_y_vel = clamp(delta_y, position_tolerance, -position_tolerance) * 100/position_tolerance * (self.autonomous_speed if self.running_autonomous else 1)
         target_x_vel = clamp(delta_x, position_tolerance, -position_tolerance) * 100/position_tolerance * (self.autonomous_speed if self.running_autonomous else 1)
 
+        target_theta_vel = ((clamp(delta_theta, orientation_tolerance, -orientation_tolerance) * 100 / (orientation_tolerance - 3)) ** 2) / 100 * sign(delta_theta) * (1 if self.running_autonomous else 1)
         
-        target_theta_vel = ((clamp(delta_theta, orientation_tolerance, -orientation_tolerance) * 100 / (orientation_tolerance - 2)) ** 2) / 100 * sign(delta_theta) * (1 if self.running_autonomous else 1)
-        
+        target_theta_vel = clamp(target_theta_vel, 100, -100)
 
         if self.target_state["override_velocity_x"] != None:
             target_x_vel = self.target_state["override_velocity_x"]
@@ -1018,12 +1018,6 @@ class Robot:
             target_y_vel = self.target_state["override_velocity_y"]
         if self.target_state["override_velocity_theta"] != None:
             target_theta_vel = self.target_state["override_velocity_theta"]
-
-        # Spin the motors (in case they were stopped before, might be able to be ommitted later)
-        left_motor_a.spin(FORWARD)
-        left_motor_b.spin(FORWARD)
-        right_motor_a.spin(FORWARD)
-        right_motor_b.spin(FORWARD)
 
         # Cool driving toggle (basically you rotate the target direction vector based on)
         # the robots heading (https://stackoverflow.com/questions/14607640/rotating-a-vector-in-3d-space)
@@ -1035,13 +1029,11 @@ class Robot:
             target_y_vel = target_y_vel / 4
             target_theta_vel = target_theta_vel / 4
         
-        # if 100 - target_theta_vel < target_x_vel + target_y_vel:
-        #     print("previous X, y, theta", target_x_vel, target_y_vel, target_theta_vel)
-
-        #     target_x_vel = 100 - target_theta_vel * target_x_vel / (target_x_vel + target_y_vel)
-        #     target_y_vel = 100 - target_theta_vel * target_y_vel / (target_x_vel + target_y_vel)
-
-        #     print("after X, y, theta", target_x_vel, target_y_vel, target_theta_vel)
+        if 100 - abs(target_theta_vel) < abs(target_x_vel) + abs(target_y_vel):
+            # print("previous X, y, theta", target_x_vel, target_y_vel, target_theta_vel)
+            target_x_vel = (100 - abs(target_theta_vel)) * target_x_vel / (abs(target_x_vel) + abs(target_y_vel))
+            target_y_vel = (100 - abs(target_theta_vel)) * target_y_vel / (abs(target_x_vel) + abs(target_y_vel))
+            # print("after X, y, theta", target_x_vel, target_y_vel, target_theta_vel)
 
         # Get the motor powers
         left_motor_a_target_velocity = target_x_vel + target_y_vel + target_theta_vel
@@ -1069,7 +1061,7 @@ class Robot:
 
         if abs(right_motor_b.velocity(PERCENT)) < slow_down_speed_threshold:
             max_acceleration_right_motor_b = self.max_acceleration * 0.5
-
+        
         # Okie doki, this line is gonna need some documentation, but first some labels:
         # (self.max_acceleration / self.max_velocity * 100) means the maximum acceleration of our robot IN A PERCENTAGE (i.e. 10 percent per second, 50 percent per second, -10 percent, per second)
         # (self.max_acceleration / self.max_velocity * 100) * self.delta_time is the maximum change in velocity of the robot FOR THIS RUN THROUGH THE LOOP (by multipling by delta time we get how long its been since the last loop, which means we can change our velocity by that change in time time acceleration), Ex. if its been 0.1 seconds since the last loop, then our change in velocity can be 10 percent, but if it was 1 second then our change in velocity can be 100 percent beceause its been such a long time (if you still don't understand then learn what integration is)
@@ -1084,13 +1076,17 @@ class Robot:
         right_motor_b_target_velocity = clamp(right_motor_b_target_velocity, (max_acceleration_right_motor_b / self.max_velocity * 100) * self.delta_time + right_motor_b.velocity(
             PERCENT), -(max_acceleration_right_motor_b / self.max_velocity * 100) * self.delta_time + right_motor_b.velocity(PERCENT))
         
-        # print("velocity of lf,rf,lb,rb", left_motor_a_target_velocity, right_motor_a_target_velocity, left_motor_b_target_velocity, right_motor_b_target_velocity)
-
         # Accelerate the motors to the target velocity.
-        left_motor_a.set_velocity(left_motor_a_target_velocity, PERCENT)
-        right_motor_a.set_velocity(right_motor_a_target_velocity, PERCENT)
-        left_motor_b.set_velocity(left_motor_b_target_velocity, PERCENT)
-        right_motor_b.set_velocity(right_motor_b_target_velocity, PERCENT)
+        left_motor_a.spin(FORWARD, left_motor_a_target_velocity, PERCENT)
+        right_motor_a.spin(FORWARD, right_motor_a_target_velocity, PERCENT)
+        left_motor_b.spin(FORWARD, left_motor_b_target_velocity, PERCENT)
+        right_motor_b.spin(FORWARD, right_motor_b_target_velocity, PERCENT)
+
+        # left_motor_a.spin(FORWARD, left_motor_a_target_velocity / 100 * 10.9, VOLT)
+        # right_motor_a.spin(FORWARD, right_motor_a_target_velocity / 100 * 10.9, VOLT)
+        # left_motor_b.spin(FORWARD, left_motor_b_target_velocity / 100 * 10.9, VOLT)
+        # right_motor_b.spin(FORWARD, right_motor_b_target_velocity / 100 * 10.9, VOLT)
+
 
     def expansion_update(self):
         '''
@@ -1482,14 +1478,21 @@ class Robot:
             # In case we accidentally run 2 autos at the same time lmmao
             return
         # Update loop
+        self.running_autonomous = True
         self.update()
         self.autonomous_timer.reset()
-        self.running_autonomous = True
         # timeout_timer = Timer()
         # timeout_time = 0
+        self["override_velocity_x"] = None
+        self["override_velocity_y"] = None
+        self["override_velocity_theta"] = None
+        
+
         for step in self.autonomous_procedure:
-            print("we are doing, ", step)
             target_state = {}
+            self["override_velocity_x"] = None
+            self["override_velocity_y"] = None
+            self["override_velocity_theta"] = None
 
             # if "timeout" in step.keys():
             #     timeout_timer.reset()
@@ -1522,7 +1525,7 @@ class Robot:
 
             # While we haven't reached the target state then just wait
             while not self.target_reached:
-                # print("WE ARE WAITING...", self.shoot_disc <= 0, self["roller_and_intake_motor_1_done"], self["roller_and_intake_motor_2_done"], abs(self["x_pos"] - self.target_state["x_pos"]) < 0.3, abs(self["y_pos"] - self.target_state["y_pos"]) < 0.3, abs(self["theta"] - self.target_state["theta"]))
+                # print("WE ARE WAITING...", self.target_state["x_pos"], self.x_pos, self.target_state["y_pos"], self.y_pos, self.target_state["theta"], self.total_theta, self["override_velocity_x"])
                 wait(0.05, SECONDS)
         print("DONE WITH AUTONOMOUS")
 
@@ -2077,6 +2080,9 @@ def driver_control():
     reset_theta_timer = Timer()
     reset_theta_timer.reset()
 
+    controller_output_timer = Timer()
+    controller_output_timer.reset()
+
     r.driver_controlled_timer.reset()
 
     r.autonomous_timer.reset()
@@ -2120,7 +2126,7 @@ def driver_control():
 
     gui.set_page(0)
     while True:
-        
+
         if r.running_autonomous:
             continue
 
@@ -2128,7 +2134,7 @@ def driver_control():
         # If the joystick hasn't been pressed 
         new_theta = ((controller_1.axis1.position())) ** 2 * sign(controller_1.axis1.position()) / 100 * (0.7 if recording_autonomous else 1)
 
-        new_x = ((controller_1.axis4.position())) ** 2 * sign(controller_1.axis4.position()) / 100 * (0.25 if recording_autonomous else 1)
+        new_x = 0 * ((controller_1.axis4.position())) ** 2 * sign(controller_1.axis4.position()) / 100 * (0.25 if recording_autonomous else 1)
         new_y = ((controller_1.axis3.position())) ** 2 * sign(controller_1.axis3.position()) / 100 * (0.25 if recording_autonomous else 1)
         
         new_intake = clamp(controller_2.buttonL1.pressing() * 100 - controller_2.buttonR1.pressing() * 100 + controller_1.buttonLeft.pressing() * 100, 100, -100)
@@ -2320,17 +2326,17 @@ def driver_control():
             r.path.append(r.return_state_of_auto())
 
         # Timer to print things out to the terminal every x seconds
-        if (timer.value() > 0.1):
-            # Print the flywheel torque
-            # Prints the efficiency of the motors:
+        if (timer.value() > 0.02):
+            Thread(output_data)
+            timer.reset()
+        
+        if controller_output_timer.value() > 0.2:
             controller_1.screen.clear_row(3)
-            print(left_motor_a.velocity(PERCENT), left_motor_b.velocity(PERCENT), right_motor_a.velocity(PERCENT), right_motor_b.velocity(PERCENT))
-            # Display the flywheel speed and the robot theta from [-180 to 180]
             controller_1.screen.print(f("FLY:", r.flywheel_speed, "ang:", round(r.theta, 1), len(r.path)))
-
             controller_2.screen.clear_row(3)
             controller_2.screen.print(f("FLY:", r.flywheel_speed, "ang:", round(r.theta)))
-            timer.reset()
+            controller_output_timer.reset()
+
 
         if controller_2.buttonUp.pressing() and not previous_controller_states_2["buttonUp"] and expansion_timer.value() < (60 + 45 - 11):
             r.set_target_state({
@@ -2434,6 +2440,7 @@ def driver_control():
             "buttonA" : controller_2.buttonA.pressing(),
             "buttonB" : controller_2.buttonB.pressing(),
         }
+        wait(0.01, SECONDS)
 
 ########## PATHS ########## PATHS ########## PATHS ########## PATHS ########## PATHS ########## PATHS ##########
 
@@ -2898,6 +2905,7 @@ auto_test_odometry = [
         "set_x": 0,
         "set_y": 0,
         "set_theta": 0,
+        "autonomous_speed" : 0.5,
     },
     {
         "launch_expansion": False,
@@ -2905,12 +2913,12 @@ auto_test_odometry = [
         "intake_speed": 0,
         "message": "Move towards the rollers",
         "flywheel_speed": 0,
-        "x_pos": -4,
-        "y_pos": -16.6,
+        "x_pos": -4.5,
+        "y_pos": -16.5,
     },
     {
         "roller_spin_for" : 0.5,
-        "wait" : 2,
+        "message" : "Doing the rollers!"
     },
     {
         "x_pos": 0.1,
@@ -2918,12 +2926,10 @@ auto_test_odometry = [
     },
     {
         "launch_expansion": False,
-        "theta": 90.2,
+        "theta": 90,
         "intake_speed": 0,
-        "message": "This is state #3!",
+        "message": "Rotating the robot!",
         "flywheel_speed": 0,
-        "x_pos": 0.1,
-        "y_pos": 6.4,
     },
     {
         "launch_expansion": False,
@@ -2936,9 +2942,9 @@ auto_test_odometry = [
     },
     {
         "launch_expansion": False,
-        "theta": 92,
+        "theta": 90,
         "intake_speed": 0,
-        "message": "This is state #5!",
+        "message": "About to do the other roller!",
         "flywheel_speed": 0,
         "x_pos": -62,
         "y_pos": 8.5,
@@ -2966,7 +2972,7 @@ auto_test_odometry = [
         "shoot_disc" : 1,
     },
     {
-        "wait" : 1,
+        "wait" : 0.5,
     },
     {
         "shoot_disc" : 1,
@@ -3046,20 +3052,20 @@ auto_test_odometry = [
         "shoot_disc" : 1,
     },
     {
-        "wait" : 1,
+        "wait" : 0.5,
     },
     {
         "shoot_disc" : 1,
     },
     {
-        "wait" : 1,
+        "wait" : 0.5,
     },
     {
         "shoot_disc" : 1,
     },
     {
         "launch_expansion": False,
-        "theta": 270.4,
+        "theta": 270,
         "intake_speed": 0,
         "message": "This is state #1!",
         "flywheel_speed": 0,
@@ -3069,7 +3075,7 @@ auto_test_odometry = [
 
     {
         "launch_expansion": False,
-        "theta": 269.6,
+        "theta": 270,
         "intake_speed": 0,
         "message": "This is state #2!",
         "flywheel_speed": 0,
@@ -3078,11 +3084,11 @@ auto_test_odometry = [
     },
     {
         "roller_spin_for" : 0.5,
-    }
-
+        "message" : "Doing the third roller!",
+    },
     {
         "launch_expansion": False,
-        "theta": 269.9,
+        "theta": 270,
         "intake_speed": 0,
         "message": "This is state #3!",
         "flywheel_speed": 0,
@@ -3092,7 +3098,7 @@ auto_test_odometry = [
 
     {
         "launch_expansion": False,
-        "theta": 180.1,
+        "theta": 180,
         "intake_speed": 0,
         "message": "This is state #4!",
         "flywheel_speed": 0,
@@ -3121,7 +3127,7 @@ auto_test_odometry = [
     },
     {
         "roller_spin_for" : 0.5,
-    }
+    },
 ]
 
 auto_test = [
@@ -3212,7 +3218,7 @@ gui.add_page([
     Text("", 240, 80, 120, 40, Color.BLACK,lambda: "y: {:.2f}".format(r.y_pos),), 
     Text("", 240, 120, 120, 40, Color.BLACK, lambda: f("θ:", str(r.theta).split(".")[0]),), 
     Text("", 360, 40, 120, 40, Color.BLACK, lambda: f("T", round(flywheel_motor_1.temperature()), round(flywheel_motor_2.temperature()))),
-    Switch(["Recording: Off", "Recording: On"], 360, 160, 120, 40, [Color.RED, Color.GREEN], lambda v: start_recording_mode_for_autonomous(v), (False, True)),
+    Switch(["Rec. Off", "Rec. On"], 360, 160, 120, 40, [Color.RED, Color.GREEN], lambda v: start_recording_mode_for_autonomous(v), (False, True)),
     Button("Go To Comp", 360, 200, 120, 40, (0xAAAAAA), lambda: gui.set_page(0)),
     Text("", 120, 40, 120, 40, Color.BLACK, lambda: f(round(left_motor_a.temperature()), round(left_motor_b.temperature()), round(right_motor_a.temperature()), round(right_motor_b.temperature()))),
 ])
@@ -3272,10 +3278,25 @@ def test_drivetrain():
 
 # test_drivetrain()
 
+def output_data():
+    # Print the flywheel torque
+    # Prints the efficiency of the motors:
+    # print(brain.timer.value(), flywheel_motor_1.velocity(PERCENT), flywheel_motor_2.velocity(PERCENT))
+    # Display the flywheel speed and the robot theta from [-180 to 180]
+    # print(brain.timer.value(), left_motor_a.position(DEGREES), right_motor_a.position(DEGREES), left_motor_b.position(DEGREES), right_motor_b.position(DEGREES))
+    pass
+
+# Trial 1
+# -5 cm
+
 competition = Competition(driver_control, r.run_autonomous)
 
 # ! PRIORITY
 # TODO: Figure out why the robot's encoders are reading a greater value than they actually are
+
+# TODO: Make all pid controllers be based on delta time
+# TODO: Make loop sleep time 0 AND then retune EVERYTHING
+
 # TODO: Use accel/encoders to figure out when the robot is stopped?!?!?
 # TODO: Create some sort of timeout
 # TODO: Make thingy that detects when robot stops and if that happens then continue the autonomous mode.
