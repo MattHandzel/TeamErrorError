@@ -748,7 +748,7 @@ class Robot:
     autonomous_speed: float = 0.48
     
     # * MISC
-    update_loop_delay = 0.01  # 10 ms
+    update_loop_delay = 0.00  # 10 ms
 
     # Used to keep track of time in auto and driver mode respectively, use it for nicely logging data, can be used during either modes for end game/pathfinding rules
     autonomous_timer = Timer()
@@ -934,6 +934,7 @@ class Robot:
         # prevent divide by zero
         if self.delta_time == 0:
             return
+
         
         # If we want to save the states of the the robot (which will allow us to do cool things such as recording our matches and replaying our momvements, this must be turned to true)
         if self.save_states:
@@ -964,7 +965,6 @@ class Robot:
         self.status_update()
 
 
-        self.total_updates += 1
     
     def position_update(self):
         '''
@@ -1028,11 +1028,12 @@ class Robot:
             target_x_vel = target_x_vel / 4
             target_y_vel = target_y_vel / 4
             target_theta_vel = target_theta_vel / 4
-        
-        if 100 - abs(target_theta_vel) < abs(target_x_vel) + abs(target_y_vel):
+
+        max_speed_percentage = 100
+        if max_speed_percentage - abs(target_theta_vel) < abs(target_x_vel) + abs(target_y_vel):
             # print("previous X, y, theta", target_x_vel, target_y_vel, target_theta_vel)
-            target_x_vel = (100 - abs(target_theta_vel)) * target_x_vel / (abs(target_x_vel) + abs(target_y_vel))
-            target_y_vel = (100 - abs(target_theta_vel)) * target_y_vel / (abs(target_x_vel) + abs(target_y_vel))
+            target_x_vel = (max_speed_percentage - abs(target_theta_vel)) * target_x_vel / (abs(target_x_vel) + abs(target_y_vel))
+            target_y_vel = (max_speed_percentage - abs(target_theta_vel)) * target_y_vel / (abs(target_x_vel) + abs(target_y_vel))
             # print("after X, y, theta", target_x_vel, target_y_vel, target_theta_vel)
 
         # Get the motor powers
@@ -1757,8 +1758,8 @@ class Robot:
             self.flywheel_motor_2_average_output = 0
 
         kP = 0.4 # before aws 0.03
-        kI = 0.0005 # before was 0.0004 (this worked pretty well)
-        kD = 0.03
+        kI = 0.0005 / 0.022 # before was 0.0004 (this worked pretty well)
+        kD = 0.03 * 0.022
 
         # Boolean to determine if the flywheel is recovering from a disc being shot
         flywheel_recovery_mode = (self.flywheel_recovery_timer.value()) < (0.3 * (sqrt(self.flywheel_speed / 35))) and self.is_shooting
@@ -1768,10 +1769,10 @@ class Robot:
             # self.flywheel_recovery_timer.reset()
             kI = 0
             kD = 0
-            kP = 2.4 # before aws 0.03
+            kP = 2.4 
 
         proportional_term_flywheel_1 = kP * (self.flywheel_speed - flywheel_motor_1.velocity(PERCENT))
-        derivative_term_flywheel_1 = kD * (self.flywheel_1_avg_speed - self.previous_flywheel_1_avg_speed)
+        derivative_term_flywheel_1 = kD * (self.flywheel_1_avg_speed - self.previous_flywheel_1_avg_speed) / self.delta_time
         # error_helper_term_flywheel_1 = 0.01 * ((self.flywheel_speed - self.flywheel_1_avg_speed) - self.previous_flywheel_1_error) 
 
         derivative_term_flywheel_1 = max(derivative_term_flywheel_1, -0.5)
@@ -1780,18 +1781,18 @@ class Robot:
         # derivative_term_flywheel_1 = 0
 
         proportional_term_flywheel_2 = kP * (self.flywheel_speed - flywheel_motor_2.velocity(PERCENT))
-        derivative_term_flywheel_2 = kD * (self.flywheel_2_avg_speed - self.previous_flywheel_2_avg_speed)
+        derivative_term_flywheel_2 = kD * (self.flywheel_2_avg_speed - self.previous_flywheel_2_avg_speed)  / self.delta_time
         # error_helper_term_flywheel_2 = 0.01 * ((self.flywheel_speed - self.flywheel_1_avg_speed) - self.previous_flywheel_1_error) 
 
         derivative_term_flywheel_2 = max(derivative_term_flywheel_2, -0.5)
         derivative_term_flywheel_2 = min(derivative_term_flywheel_2, 0.5)
         
-        self.integral_term_flywheel_1 += kI * (self.flywheel_speed - self.flywheel_1_avg_speed) + (self.flywheel_speed - self.previous_flywheel_speed) * 0.105
-        self.integral_term_flywheel_2 += kI * (self.flywheel_speed - self.flywheel_2_avg_speed) + (self.flywheel_speed - self.previous_flywheel_speed) * 0.11
+        self.integral_term_flywheel_1 += self.delta_time * kI * (self.flywheel_speed - self.flywheel_1_avg_speed) + (self.flywheel_speed - self.previous_flywheel_speed) * 0.108
+        self.integral_term_flywheel_2 += self.delta_time * kI * (self.flywheel_speed - self.flywheel_2_avg_speed) + (self.flywheel_speed - self.previous_flywheel_speed) * 0.11 
 
         # Clamp the voltage so we don't send more than the maximum I stated 
-        self.integral_term_flywheel_1 = clamp(self.integral_term_flywheel_1, MAX_VOLTAGE, -MAX_VOLTAGE)
-        self.integral_term_flywheel_2 = clamp(self.integral_term_flywheel_2, MAX_VOLTAGE, -MAX_VOLTAGE)
+        self.integral_term_flywheel_1 = clamp(self.integral_term_flywheel_1, MAX_VOLTAGE, -MAX_VOLTAGE) 
+        self.integral_term_flywheel_2 = clamp(self.integral_term_flywheel_2, MAX_VOLTAGE, -MAX_VOLTAGE) 
 
 
         if flywheel_recovery_mode:
@@ -2130,11 +2131,32 @@ def driver_control():
         if r.running_autonomous:
             continue
 
+        auto_orientate_dictionary = {
+          0 : controller_1.buttonX.pressing(),
+          -90 : controller_1.buttonY.pressing(),
+          90 : controller_1.buttonA.pressing(),
+          180 : controller_1.buttonB.pressing(),
+        }
+
+        auto_orientate_total_button_pressed_count = int(controller_1.buttonX.pressing()) + int(controller_1.buttonY.pressing()) + int(controller_1.buttonA.pressing()) + int(controller_2.buttonB.pressing()) 
+        auto_orientate_target_theta = None
+        
+        if auto_orientate_total_button_pressed_count > 0:
+            auto_orientate_target_theta = 0
+            for key in auto_orientate_dictionary:
+                if auto_orientate_dictionary[key]:
+                    auto_orientate_target_theta += key
+            
+            auto_orientate_target_theta /= auto_orientate_total_button_pressed_count
+
         # Render and update the gui before everything else
         # If the joystick hasn't been pressed 
         new_theta = ((controller_1.axis1.position())) ** 2 * sign(controller_1.axis1.position()) / 100 * (0.7 if recording_autonomous else 1)
 
-        new_x = 0 * ((controller_1.axis4.position())) ** 2 * sign(controller_1.axis4.position()) / 100 * (0.25 if recording_autonomous else 1)
+        # if abs(new_theta) < 2:
+        #     new_theta = None
+
+        new_x = ((controller_1.axis4.position())) ** 2 * sign(controller_1.axis4.position()) / 100 * (0.25 if recording_autonomous else 1)
         new_y = ((controller_1.axis3.position())) ** 2 * sign(controller_1.axis3.position()) / 100 * (0.25 if recording_autonomous else 1)
         
         new_intake = clamp(controller_2.buttonL1.pressing() * 100 - controller_2.buttonR1.pressing() * 100 + controller_1.buttonLeft.pressing() * 100, 100, -100)
@@ -2153,36 +2175,36 @@ def driver_control():
                 }
             )
 
-        ### AUTO-ORIENTATE FEATURE
-        if controller_1.buttonA.pressing():
-            new_theta = None
-            r.set_target_state({
-                "theta" : 90,
-            })
+        # ### AUTO-ORIENTATE FEATURE
+        # if controller_1.buttonA.pressing():
+        #     new_theta = None
+        #     r.set_target_state({
+        #         "theta" : 90,
+        #     })
         
-        if controller_1.buttonY.pressing():
-            new_theta = None
-            r.set_target_state({
-                "theta" : -90,
-            })
+        # if controller_1.buttonY.pressing():
+        #     new_theta = None
+        #     r.set_target_state({
+        #         "theta" : -90,
+        #     })
 
-        # If only the x button is being pressed then rotate the robot to 0 deg, 
-        # if the x and a button is pressed, rotate to 45, if a and y pressed
-        # rotate to -45 deg
-        if controller_1.buttonX.pressing():
-            new_theta = None
-            if controller_1.buttonA.pressing():
-                r.set_target_state({
-                    "theta" : 45,
-                })
-            elif controller_1.buttonY.pressing():
-                r.set_target_state({
-                    "theta" : -45,
-                })
-            else:
-                r.set_target_state({
-                    "theta" : 0,
-                })
+        # # If only the x button is being pressed then rotate the robot to 0 deg, 
+        # # if the x and a button is pressed, rotate to 45, if a and y pressed
+        # # rotate to -45 deg
+        # if controller_1.buttonX.pressing():
+        #     new_theta = None
+        #     if controller_1.buttonA.pressing():
+        #         r.set_target_state({
+        #             "theta" : 45,
+        #         })
+        #     elif controller_1.buttonY.pressing():
+        #         r.set_target_state({
+        #             "theta" : -45,
+        #         })
+        #     else:
+        #         r.set_target_state({
+        #             "theta" : 0,
+        #         })
 
         if controller_2.buttonA.pressing() and not previous_controller_states_2["buttonA"]:
             new_intake = None
@@ -2196,25 +2218,25 @@ def driver_control():
             new_theta = None
             reset_robot_theta()
 
-        # If only the b button is being pressed then rotate the robot to 180 deg,
-        # if the b and a button is pressed rotate to 45, if b and y is presed
-        # rotate to -135 deg
-        if controller_1.buttonB.pressing():
-            new_theta = None
-            if controller_1.buttonA.pressing():
-                r.set_target_state({
-                    "theta" : 135,
-                })
-            elif controller_1.buttonY.pressing():
-                r.set_target_state({
-                    "theta" : -135,
-                })
-            else:
-                r.set_target_state({
-                    "theta" : 180,
-                })
+        # # If only the b button is being pressed then rotate the robot to 180 deg,
+        # # if the b and a button is pressed rotate to 45, if b and y is presed
+        # # rotate to -135 deg
+        # if controller_1.buttonB.pressing():
+        #     new_theta = None
+        #     if controller_1.buttonA.pressing():
+        #         r.set_target_state({
+        #             "theta" : 135,
+        #         })
+        #     elif controller_1.buttonY.pressing():
+        #         r.set_target_state({
+        #             "theta" : -135,
+        #         })
+        #     else:
+        #         r.set_target_state({
+        #             "theta" : 180,
+        #         })
         
-        if controller_1.buttonUp.pressing() and r.using_gps and gps.quality() >= 100:
+        if controller_1.buttonDown.pressing() and r.using_gps and gps.quality() >= 100:
             new_theta = None
             
             # If the robot is closer to one goal or the other 
@@ -2257,35 +2279,35 @@ def driver_control():
                 new_theta += delta_theta
             
 
-        if controller_2.buttonA.pressing():
-            new_theta = None
-            r.set_target_state({
-                "theta" : 90,
-            })
+        # if controller_2.buttonA.pressing():
+        #     new_theta = None
+        #     r.set_target_state({
+        #         "theta" : 90,
+        #     })
         
-        if controller_2.buttonY.pressing():
-            new_theta = None
-            r.set_target_state({
-                "theta" : -90,
-            })
+        # if controller_2.buttonY.pressing():
+        #     new_theta = None
+        #     r.set_target_state({
+        #         "theta" : -90,
+        #     })
 
         # If only the x button is being pressed then rotate the robot to 0 deg, 
         # if the x and a button is pressed, rotate to 45, if a and y pressed
         # rotate to -45 deg
-        if controller_2.buttonX.pressing():
-            new_theta = None
-            if controller_2.buttonA.pressing():
-                r.set_target_state({
-                    "theta" : 45,
-                })
-            elif controller_2.buttonY.pressing():
-                r.set_target_state({
-                    "theta" : -45,
-                })
-            else:
-                r.set_target_state({
-                    "theta" : 0,
-                })
+        # if controller_2.buttonX.pressing():
+        #     new_theta = None
+        #     if controller_2.buttonA.pressing():
+        #         r.set_target_state({
+        #             "theta" : 45,
+        #         })
+        #     elif controller_2.buttonY.pressing():
+        #         r.set_target_state({
+        #             "theta" : -45,
+        #         })
+        #     else:
+        #         r.set_target_state({
+        #             "theta" : 0,
+        #         })
         
         if controller_2.buttonDown.pressing():
             reset_robot_theta()
@@ -2293,20 +2315,20 @@ def driver_control():
         # If only the b button is being pressed then rotate the robot to 180 deg,
         # if the b and a button is pressed rotate to 45, if b and y is presed
         # rotate to -135 deg
-        if controller_2.buttonB.pressing():
-            new_theta = None
-            if controller_2.buttonA.pressing():
-                r.set_target_state({
-                    "theta" : 135,
-                })
-            elif controller_2.buttonY.pressing():
-                r.set_target_state({
-                    "theta" : -135,
-                })
-            else:
-                r.set_target_state({
-                    "theta" : 180,
-                })
+        # if controller_2.buttonB.pressing():
+        #     new_theta = None
+        #     if controller_2.buttonA.pressing():
+        #         r.set_target_state({
+        #             "theta" : 135,
+        #         })
+        #     elif controller_2.buttonY.pressing():
+        #         r.set_target_state({
+        #             "theta" : -135,
+        #         })
+        #     else:
+        #         r.set_target_state({
+        #             "theta" : 180,
+        #         })
 
         if recording_autonomous:
             new_theta = None
@@ -2330,6 +2352,7 @@ def driver_control():
             Thread(output_data)
             timer.reset()
         
+        # Display data to the controllers
         if controller_output_timer.value() > 0.2:
             controller_1.screen.clear_row(3)
             controller_1.screen.print(f("FLY:", r.flywheel_speed, "ang:", round(r.theta, 1), len(r.path)))
@@ -2913,7 +2936,7 @@ auto_test_odometry = [
         "intake_speed": 0,
         "message": "Move towards the rollers",
         "flywheel_speed": 0,
-        "x_pos": -4.5,
+        "x_pos": -7,
         "y_pos": -16.5,
     },
     {
@@ -2921,8 +2944,8 @@ auto_test_odometry = [
         "message" : "Doing the rollers!"
     },
     {
-        "x_pos": 0.1,
-        "y_pos": 6.4,
+        "x_pos": 7,
+        "y_pos": 3,
     },
     {
         "launch_expansion": False,
@@ -2934,20 +2957,24 @@ auto_test_odometry = [
     {
         "launch_expansion": False,
         "theta": 90,
-        "intake_speed": 0,
+        "intake_speed": 100,
         "message": "This is state #4!",
         "flywheel_speed": 0,
-        "x_pos": -16.1,
-        "y_pos": -5.5,
+        "x_pos": 5,
+        "y_pos": 15,
     },
     {
         "launch_expansion": False,
         "theta": 90,
-        "intake_speed": 0,
+        "intake_speed": 100,
         "message": "About to do the other roller!",
         "flywheel_speed": 0,
+        "x_pos": -50,
+        "y_pos": 13,
+    },
+    {
+        "intake_speed": 0,
         "x_pos": -62,
-        "y_pos": 8.5,
     },
     {
         "roller_spin_for" : 0.5,
@@ -2957,16 +2984,20 @@ auto_test_odometry = [
     },
     {
         "launch_expansion": False,
-        "theta": 89.7,
+        "theta": 90,
         "intake_speed": 0,
         "message": "This is state #3!",
-        "flywheel_speed": 34,
-        "x_pos": 105.0,
-        "y_pos": 3.8,
+        "x_pos": 100,
+        "y_pos": 13,
     },
     {
-        "flywheel_speed" : 34,
-        "theta" : 92.5,
+        "theta" : 93,
+    },
+    {
+        "shoot_disc" : 1,
+    },
+    {
+        "wait" : 0.5,
     },
     {
         "shoot_disc" : 1,
@@ -2983,7 +3014,7 @@ auto_test_odometry = [
         "intake_speed": 0,
         "message": "This is state #1!",
         "flywheel_speed": 0,
-        "x_pos": 102.6,
+        "x_pos": 100,
         "y_pos": 4.5,
     },
     {
@@ -3005,7 +3036,7 @@ auto_test_odometry = [
         "message": "This is state #4!",
         "flywheel_speed": 0,
         "x_pos": 164,
-        "y_pos": 164,
+        "y_pos": 160,
     },
     {
         "autonomous_speed" : 0.48,
@@ -3026,8 +3057,8 @@ auto_test_odometry = [
         "launch_expansion": False,
         "intake_speed": 0,
         "message": "This is state #2!",
-        "flywheel_speed": 35,
-        "x_pos": 197.4,
+        "flywheel_speed": 32,
+        "x_pos": 200,
         "y_pos": 164.8,
     },
     {
@@ -3035,30 +3066,30 @@ auto_test_odometry = [
         "theta": 180,
         "intake_speed": 0,
         "message": "This is state #3!",
-        "flywheel_speed": 35,
-        "x_pos": 197.0,
+        "flywheel_speed": 32,
+        "x_pos": 200,
         "y_pos": 164.1,
     },
     {
         "launch_expansion": False,
-        "theta": 180.5,
+        "theta": 180,
         "intake_speed": 0,
         "message": "This is state #4!",
-        "flywheel_speed": 35,
-        "x_pos": 196.5,
+        "flywheel_speed": 32,
+        "x_pos": 200,
         "y_pos": 120,
     },
     {
         "shoot_disc" : 1,
     },
     {
-        "wait" : 0.5,
+        "wait" : 0.7,
     },
     {
         "shoot_disc" : 1,
     },
     {
-        "wait" : 0.5,
+        "wait" : 0.7,
     },
     {
         "shoot_disc" : 1,
@@ -3069,8 +3100,17 @@ auto_test_odometry = [
         "intake_speed": 0,
         "message": "This is state #1!",
         "flywheel_speed": 0,
-        "x_pos": 193.8,
+        "x_pos": 200,
         "y_pos": 120.9,
+    },
+    {
+        "launch_expansion": False,
+        "theta": 270,
+        "intake_speed": 0,
+        "message": "This is state #1!",
+        "flywheel_speed": 0,
+        "x_pos": 200,
+        "y_pos": 210,
     },
 
     {
@@ -3079,8 +3119,8 @@ auto_test_odometry = [
         "intake_speed": 0,
         "message": "This is state #2!",
         "flywheel_speed": 0,
-        "x_pos": 225.0,
-        "y_pos": 217.8,
+        "x_pos": 236,
+        "y_pos": 210,
     },
     {
         "roller_spin_for" : 0.5,
@@ -3092,27 +3132,27 @@ auto_test_odometry = [
         "intake_speed": 0,
         "message": "This is state #3!",
         "flywheel_speed": 0,
-        "x_pos": 176.1,
-        "y_pos": 217.8,
+        "x_pos": 176,
+        "y_pos": 210,
     },
 
     {
         "launch_expansion": False,
         "theta": 180,
-        "intake_speed": 0,
+        "intake_speed": 100,
         "message": "This is state #4!",
         "flywheel_speed": 0,
-        "x_pos": 176.7,
-        "y_pos": 217.1,
+        "x_pos": 176,
+        "y_pos": 210,
     },
 
     {
         "launch_expansion": False,
         "theta": 180.1,
-        "intake_speed": 0,
+        "intake_speed": 100,
         "message": "This is state #5!",
         "flywheel_speed": 0,
-        "x_pos": 169.5,
+        "x_pos": 176,
         "y_pos": 244.4,
     },
 
@@ -3122,12 +3162,33 @@ auto_test_odometry = [
         "intake_speed": 0,
         "message": "This is state #6!",
         "flywheel_speed": 0,
-        "x_pos": 168.2,
-        "y_pos": 277.5,
+        "x_pos": 176,
+        "y_pos": 276.5,
     },
     {
         "roller_spin_for" : 0.5,
+        "message" : "Doing the 4th roller",
     },
+    {
+        "x_pos": 200,
+        "y_pos": 240,
+    },
+    {
+        "launch_expansion": False,
+        "theta": 225,
+        "intake_speed": 0,
+        "message": "This is state #2!",
+        "flywheel_speed": 0,
+        "x_pos": 200,
+        "y_pos": 240,
+    },
+    {
+        "launch_expansion": True,
+        "wait" : 1,
+    },
+    {
+        "wait" : 1,
+    }
 ]
 
 auto_test = [
@@ -3284,10 +3345,8 @@ def output_data():
     # print(brain.timer.value(), flywheel_motor_1.velocity(PERCENT), flywheel_motor_2.velocity(PERCENT))
     # Display the flywheel speed and the robot theta from [-180 to 180]
     # print(brain.timer.value(), left_motor_a.position(DEGREES), right_motor_a.position(DEGREES), left_motor_b.position(DEGREES), right_motor_b.position(DEGREES))
+    # print(brain.timer.value(), flywheel_motor_1.velocity(PERCENT), flywheel_motor_2.velocity(PERCENT))
     pass
-
-# Trial 1
-# -5 cm
 
 competition = Competition(driver_control, r.run_autonomous)
 
@@ -3296,6 +3355,9 @@ competition = Competition(driver_control, r.run_autonomous)
 
 # TODO: Make all pid controllers be based on delta time
 # TODO: Make loop sleep time 0 AND then retune EVERYTHING
+
+# TODO: Make flywheel integral term be better (maybe make it higher when we are winding up???)
+# TODO: Do std evaluation on output from flywheels
 
 # TODO: Use accel/encoders to figure out when the robot is stopped?!?!?
 # TODO: Create some sort of timeout
