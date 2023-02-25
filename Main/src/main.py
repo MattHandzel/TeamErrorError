@@ -150,12 +150,17 @@ def init():
     })
 
     gps.set_origin(84, 200, MM)
+    
+    inertial.calibrate()
+
+    while inertial.is_calibrating():
+        wait(0.05, SECONDS)
 
     # Wait for the gyro to settle, if it takes more then 10 seconds then close out of the loop
     # When the gyro sensor inits, it reads some value for the Z rotation, this is less than a few degrees, but i don't like it
-    while (inertial.gyro_rate(ZAXIS) != 0 and t.value() < 10):
-        print("Waiting for gyro to init...")
-        wait(0.1, SECONDS)
+    # while (inertial.gyro_rate(ZAXIS) != 0 and t.value() < 10):
+    #     print("Waiting for gyro to init...")
+    #     wait(0.1, SECONDS)
 
     # Rumlbed the control to indicate to the driver (and me) that the robot is ready to run
     controller_1.rumble("...")
@@ -764,9 +769,12 @@ class Robot:
 
     flywheel_speed_levels = [
         0,
+        30,
+        31,
+        32,
         33,
         34,
-        round(35.0000000),
+        35,
         36,
         37,
         38,
@@ -1028,9 +1036,9 @@ class Robot:
             target_x_vel = target_x_vel / 4
             target_y_vel = target_y_vel / 4
             target_theta_vel = target_theta_vel / 4
-
+        
         max_speed_percentage = 100
-        if max_speed_percentage - abs(target_theta_vel) < abs(target_x_vel) + abs(target_y_vel):
+        if max_speed_percentage - abs(target_theta_vel) < abs(target_x_vel) + abs(target_y_vel) and self.running_autonomous:
             # print("previous X, y, theta", target_x_vel, target_y_vel, target_theta_vel)
             target_x_vel = (max_speed_percentage - abs(target_theta_vel)) * target_x_vel / (abs(target_x_vel) + abs(target_y_vel))
             target_y_vel = (max_speed_percentage - abs(target_theta_vel)) * target_y_vel / (abs(target_x_vel) + abs(target_y_vel))
@@ -1478,12 +1486,14 @@ class Robot:
         if self.running_autonomous:
             # In case we accidentally run 2 autos at the same time lmmao
             return
+
         # Update loop
         self.running_autonomous = True
         self.update()
         self.autonomous_timer.reset()
-        # timeout_timer = Timer()
-        # timeout_time = 0
+
+        timeout_timer = Timer()
+        timeout_time = 999
         self["override_velocity_x"] = None
         self["override_velocity_y"] = None
         self["override_velocity_theta"] = None
@@ -1495,9 +1505,11 @@ class Robot:
             self["override_velocity_y"] = None
             self["override_velocity_theta"] = None
 
-            # if "timeout" in step.keys():
-            #     timeout_timer.reset()
-            #     timeout_time = step["timeout"]
+            if "timeout" in step.keys():
+                timeout_timer.reset()
+                timeout_time = step["timeout"]
+            else:
+                timeout_time = 999
 
             if "set_x" in step:
                 self.x_pos = step["set_x"]
@@ -1508,7 +1520,6 @@ class Robot:
             
             for key in step.keys():
                 if key in self.state.keys():
-                    print("setting key of", key, "to", step[key])
                     target_state[key] = step[key]
 
             if "message" in step.keys():
@@ -1517,7 +1528,7 @@ class Robot:
             if "funcs" in step.keys():
                 for func in step["funcs"]:
                     func()
-            print("target state is", target_state)
+
             self.set_target_state(target_state)
 
             if "wait" in step.keys():
@@ -1525,9 +1536,10 @@ class Robot:
                 wait(step["wait"], SECONDS)
 
             # While we haven't reached the target state then just wait
-            while not self.target_reached:
+            while (not self.target_reached) and (timeout_timer.value() < timeout_time):
                 # print("WE ARE WAITING...", self.target_state["x_pos"], self.x_pos, self.target_state["y_pos"], self.y_pos, self.target_state["theta"], self.total_theta, self["override_velocity_x"])
                 wait(0.05, SECONDS)
+        
         print("DONE WITH AUTONOMOUS")
 
         # After the autonomous mode is over then set the target state to the robot's initial state (so we don't move and turn everything off)
@@ -2075,8 +2087,8 @@ def autonomous():
     r.stop_moving()
 
 def driver_control():
-    timer = Timer()
-    timer.reset()
+    output_data_timer = Timer()
+    output_data_timer.reset()
 
     reset_theta_timer = Timer()
     reset_theta_timer.reset()
@@ -2084,8 +2096,8 @@ def driver_control():
     controller_output_timer = Timer()
     controller_output_timer.reset()
 
+    # Reset the drivercontrolled and auto timers so that we can keep track and know how long the driver_controlled as been running for
     r.driver_controlled_timer.reset()
-
     r.autonomous_timer.reset()
     
     # A dictionary that stores the previous button states so that we can reference previous states without having to make a new variable every time 
@@ -2119,13 +2131,18 @@ def driver_control():
             "buttonB" : controller_2.buttonB.pressing(),
         }
 
+    # Timer for expansion so we don't expand too early
     expansion_timer = Timer()
     expansion_timer.reset()
+
+    previous_flywheel_speed = 0
 
     # Timer that allows us to keep track for how long we have been pressing the aimbot button for to make the robot move more as time goes on
     aimbot_timer = Timer() 
 
     gui.set_page(0)
+
+    flywheel_state = True
     while True:
 
         if r.running_autonomous:
@@ -2133,12 +2150,12 @@ def driver_control():
 
         auto_orientate_dictionary = {
           0 : controller_1.buttonX.pressing(),
-          -90 : controller_1.buttonY.pressing(),
-          90 : controller_1.buttonA.pressing(),
+        #   -90 : controller_1.buttonY.pressing(),
+        #   90 : controller_1.buttonA.pressing(),
           180 : controller_1.buttonB.pressing(),
         }
 
-        auto_orientate_total_button_pressed_count = int(controller_1.buttonX.pressing()) + int(controller_1.buttonY.pressing()) + int(controller_1.buttonA.pressing()) + int(controller_2.buttonB.pressing()) 
+        auto_orientate_total_button_pressed_count = int(controller_1.buttonX.pressing()) + int(controller_1.buttonY.pressing()) + int(controller_1.buttonA.pressing()) + int(controller_1.buttonB.pressing())  + int(controller_2.buttonA.pressing()) + int(controller_2.buttonB.pressing()) + int(controller_2.buttonY.pressing()) + int(controller_2.buttonX.pressing())
         auto_orientate_target_theta = None
         
         if auto_orientate_total_button_pressed_count > 0:
@@ -2148,6 +2165,9 @@ def driver_control():
                     auto_orientate_target_theta += key
             
             auto_orientate_target_theta /= auto_orientate_total_button_pressed_count
+
+        if controller_1.buttonB.pressing():
+            auto_orientate_target_theta = -135
 
         # Render and update the gui before everything else
         # If the joystick hasn't been pressed 
@@ -2160,6 +2180,11 @@ def driver_control():
         new_y = ((controller_1.axis3.position())) ** 2 * sign(controller_1.axis3.position()) / 100 * (0.25 if recording_autonomous else 1)
         
         new_intake = clamp(controller_2.buttonL1.pressing() * 100 - controller_2.buttonR1.pressing() * 100 + controller_1.buttonLeft.pressing() * 100, 100, -100)
+        if auto_orientate_target_theta != None:
+            new_theta = None
+            r.set_target_state({
+                "theta" : auto_orientate_target_theta
+            })
 
         if controller_2.buttonLeft.pressing():
             new_intake = None
@@ -2175,68 +2200,16 @@ def driver_control():
                 }
             )
 
-        # ### AUTO-ORIENTATE FEATURE
-        # if controller_1.buttonA.pressing():
-        #     new_theta = None
-        #     r.set_target_state({
-        #         "theta" : 90,
-        #     })
-        
-        # if controller_1.buttonY.pressing():
-        #     new_theta = None
-        #     r.set_target_state({
-        #         "theta" : -90,
-        #     })
-
-        # # If only the x button is being pressed then rotate the robot to 0 deg, 
-        # # if the x and a button is pressed, rotate to 45, if a and y pressed
-        # # rotate to -45 deg
-        # if controller_1.buttonX.pressing():
-        #     new_theta = None
-        #     if controller_1.buttonA.pressing():
-        #         r.set_target_state({
-        #             "theta" : 45,
-        #         })
-        #     elif controller_1.buttonY.pressing():
-        #         r.set_target_state({
-        #             "theta" : -45,
-        #         })
-        #     else:
-        #         r.set_target_state({
-        #             "theta" : 0,
-        #         })
-
-        if controller_2.buttonA.pressing() and not previous_controller_states_2["buttonA"]:
-            new_intake = None
-            r.set_target_state(
-                {
-                    "roller_spin_for" : 0.5,
-                }
-            )
-        
         if controller_1.buttonRight.pressing():
             new_theta = None
             reset_robot_theta()
-
-        # # If only the b button is being pressed then rotate the robot to 180 deg,
-        # # if the b and a button is pressed rotate to 45, if b and y is presed
-        # # rotate to -135 deg
-        # if controller_1.buttonB.pressing():
-        #     new_theta = None
-        #     if controller_1.buttonA.pressing():
-        #         r.set_target_state({
-        #             "theta" : 135,
-        #         })
-        #     elif controller_1.buttonY.pressing():
-        #         r.set_target_state({
-        #             "theta" : -135,
-        #         })
-        #     else:
-        #         r.set_target_state({
-        #             "theta" : 180,
-        #         })
         
-        if controller_1.buttonDown.pressing() and r.using_gps and gps.quality() >= 100:
+        # Top - aimbot
+        # right - theta
+        # bottom - toggle flywheel speed
+        # left - intake
+
+        if controller_1.buttonUp.pressing() and r.using_gps and gps.quality() >= 100:
             new_theta = None
             
             # If the robot is closer to one goal or the other 
@@ -2249,87 +2222,65 @@ def driver_control():
                 }
             )
 
+
+        
+        if (controller_1.buttonDown.pressing() and not previous_controller_states["buttonDown"]):
+            r.set_target_state({
+                "flywheel_speed": previous_flywheel_speed
+            })
+
+        if controller_2.buttonX.pressing() and not previous_controller_states_2["buttonX"]:
+            previous_flywheel_speed = r.flywheel_speed
+            r.set_target_state(
+                {
+                    "flywheel_speed" : 0,
+                }
+            )
+
+
+        # if (controller_1.buttonDown.pressing() and not previous_controller_states["buttonDown"]) and r.flywheel_speed == 0:
+        #     r.set_target_state({
+        #         "flywheel_speed": previous_flywheel_speed
+        #     })
+
+        # if ((controller_2.buttonX.pressing() and not previous_controller_states_2["buttonX"]) or ((controller_1.buttonDown.pressing() and not previous_controller_states["buttonDown"]))) and r.flywheel_speed > 0:
+        #     previous_flywheel_speed = r.flywheel_speed
+        #     r.set_target_state(
+        #         {
+        #             "flywheel_speed" : 0,
+        #         }
+        #     )
+
+        ### CAMERA AIMBOT
         # If the driver is pressing the left button, then turn on aimbot
-        if controller_1.buttonLeft.pressing():
-            if not previous_controller_states["buttonLeft"]:
-                aimbot_timer.reset()
+        # if controller_1.buttonLeft.pressing():
+        #     if not previous_controller_states["buttonLeft"]:
+        #         aimbot_timer.reset()
 
-            # Aimbot for robot
-            disc = vision.take_snapshot(5)
+        #     # Aimbot for robot
+        #     disc = vision.take_snapshot(5)
             
-            # Vision sensor objects
-            blue_goal = vision.take_snapshot(3)
+        #     # Vision sensor objects
+        #     blue_goal = vision.take_snapshot(3)
             
-            # Red goal goes not exist yet
-            red_goal = vision.take_snapshot(4)
+        #     # Red goal goes not exist yet
+        #     red_goal = vision.take_snapshot(4)
 
-            # print(blue_goal, red_goal)
+        #     # print(blue_goal, red_goal)
 
-            if disc:
-                goal = disc
-                #! THIS MEANS WE WILL SHOOT AT ANY TEAM'S COLOR
+        #     if disc:
+        #         goal = disc
+        #         #! THIS MEANS WE WILL SHOOT AT ANY TEAM'S COLOR
                 
-                # Size of vision sensor screen is 212 vertical and 316 horizontal
-                kP_for_aimbot = 20
-                scale_time_value = 1/5
+        #         # Size of vision sensor screen is 212 vertical and 316 horizontal
+        #         kP_for_aimbot = 20
+        #         scale_time_value = 1/5
 
-                # scale the values from [-1,1] and multiply by 30 as the kP, and then multiply by the sqrt of how long we've been holding the button for (to simulate a kI)
-                delta_theta = kP_for_aimbot * ((float(goal[0].centerX) - 316/2) / (316/2)) * sqrt(1 + scale_time_value * aimbot_timer.value())
-                print("delta theta", delta_theta)
-                new_theta += delta_theta
+        #         # scale the values from [-1,1] and multiply by 30 as the kP, and then multiply by the sqrt of how long we've been holding the button for (to simulate a kI)
+        #         delta_theta = kP_for_aimbot * ((float(goal[0].centerX) - 316/2) / (316/2)) * sqrt(1 + scale_time_value * aimbot_timer.value())
+        #         print("delta theta", delta_theta)
+        #         new_theta += delta_theta
             
-
-        # if controller_2.buttonA.pressing():
-        #     new_theta = None
-        #     r.set_target_state({
-        #         "theta" : 90,
-        #     })
-        
-        # if controller_2.buttonY.pressing():
-        #     new_theta = None
-        #     r.set_target_state({
-        #         "theta" : -90,
-        #     })
-
-        # If only the x button is being pressed then rotate the robot to 0 deg, 
-        # if the x and a button is pressed, rotate to 45, if a and y pressed
-        # rotate to -45 deg
-        # if controller_2.buttonX.pressing():
-        #     new_theta = None
-        #     if controller_2.buttonA.pressing():
-        #         r.set_target_state({
-        #             "theta" : 45,
-        #         })
-        #     elif controller_2.buttonY.pressing():
-        #         r.set_target_state({
-        #             "theta" : -45,
-        #         })
-        #     else:
-        #         r.set_target_state({
-        #             "theta" : 0,
-        #         })
-        
-        if controller_2.buttonDown.pressing():
-            reset_robot_theta()
-
-        # If only the b button is being pressed then rotate the robot to 180 deg,
-        # if the b and a button is pressed rotate to 45, if b and y is presed
-        # rotate to -135 deg
-        # if controller_2.buttonB.pressing():
-        #     new_theta = None
-        #     if controller_2.buttonA.pressing():
-        #         r.set_target_state({
-        #             "theta" : 135,
-        #         })
-        #     elif controller_2.buttonY.pressing():
-        #         r.set_target_state({
-        #             "theta" : -135,
-        #         })
-        #     else:
-        #         r.set_target_state({
-        #             "theta" : 180,
-        #         })
-
         if recording_autonomous:
             new_theta = None
 
@@ -2348,9 +2299,9 @@ def driver_control():
             r.path.append(r.return_state_of_auto())
 
         # Timer to print things out to the terminal every x seconds
-        if (timer.value() > 0.02):
+        if (output_data_timer.value() > 0.02):
             Thread(output_data)
-            timer.reset()
+            output_data_timer.reset()
         
         # Display data to the controllers
         if controller_output_timer.value() > 0.2:
@@ -2361,18 +2312,7 @@ def driver_control():
             controller_output_timer.reset()
 
 
-        if controller_2.buttonUp.pressing() and not previous_controller_states_2["buttonUp"] and expansion_timer.value() < (60 + 45 - 11):
-            r.set_target_state({
-                "launch_expansion" : True
-
-            })
-        elif controller_2.buttonDown.pressing():
-            r.set_target_state({
-                "launch_expansion" : False
-            })
-            expansion.close()
-        
-        if controller_2.buttonUp.pressing():
+        if controller_2.buttonUp.pressing(): # and expansion_timer.value() < (60 + 45 - 11):
             r.set_target_state({
                 "launch_expansion" : True
             })
@@ -2382,14 +2322,13 @@ def driver_control():
             })
             expansion.close()
 
-        # Shoot a disc if either of these are pressing
         if controller_1.buttonR1.pressing():
             r.set_target_state({
                 "shoot_disc": 1,
             })
 
         # When the buttons are pressed to change the level of the flywheel speed, r2 decreases level, l2 increases level
-        if controller_1.buttonR2.pressing() and not previous_controller_states["buttonR2"]:
+        if (controller_1.buttonR2.pressing() and not previous_controller_states["buttonR2"]) or (controller_2.buttonR2.pressing() and not previous_controller_states_2["buttonR2"]):
             temp_copy = r.flywheel_speed_levels.copy()
             if r.flywheel_speed not in temp_copy:
                 temp_copy.append(r.flywheel_speed)
@@ -2400,38 +2339,29 @@ def driver_control():
                 "flywheel_speed" : new_flywheel_speed
             })
 
-        elif controller_1.buttonL2.pressing() and not previous_controller_states["buttonL2"]:
+        elif (controller_1.buttonL2.pressing() and not previous_controller_states["buttonL2"]) or (controller_2.buttonL2.pressing() and not previous_controller_states_2["buttonL2"]):
             temp_copy = r.flywheel_speed_levels.copy()
             if r.flywheel_speed not in temp_copy:
                 temp_copy.append(r.flywheel_speed)
             temp_copy.sort()
             new_flywheel_speed = temp_copy[max(temp_copy.index(r.flywheel_speed)-1,0)]
             r.set_target_state({                
-                # "flywheel_speed": max(r.flywheel_speed - 2, 0)
                 "flywheel_speed": new_flywheel_speed
             })
+        
 
-        if controller_2.buttonR2.pressing() and not previous_controller_states_2["buttonR2"]:
-            temp_copy = r.flywheel_speed_levels.copy()
-            if r.flywheel_speed not in temp_copy:
-                temp_copy.append(r.flywheel_speed)
-            temp_copy.sort()
-            new_flywheel_speed = temp_copy[min(temp_copy.index(r.flywheel_speed)+1,len(temp_copy)-1)]
-            r.set_target_state({
-                # "flywheel_speed" : min(r.flywheel_speed + 2, 100)
-                "flywheel_speed" : new_flywheel_speed
-            })
-
-        elif controller_2.buttonL2.pressing() and not previous_controller_states_2["buttonL2"]:
-            temp_copy = r.flywheel_speed_levels.copy()
-            if r.flywheel_speed not in temp_copy:
-                temp_copy.append(r.flywheel_speed)
-            temp_copy.sort()
-            new_flywheel_speed = temp_copy[max(temp_copy.index(r.flywheel_speed)-1,0)]
-            r.set_target_state({                
-                # "flywheel_speed": max(r.flywheel_speed - 2, 0)
-                "flywheel_speed": new_flywheel_speed
-            })
+        if r.driver_controlled_timer.value() > 50 and r.driver_controlled_timer.value() < 50.1:
+            controller_1.rumble(".")
+            controller_2.rumble(".")
+        if r.driver_controlled_timer.value() > 57 and r.driver_controlled_timer.value() < 57.1:
+            controller_1.rumble(".")
+            controller_2.rumble(".")
+        if r.driver_controlled_timer.value() > 58 and r.driver_controlled_timer.value() < 58.1:
+            controller_1.rumble(".")
+            controller_2.rumble(".")
+        if r.driver_controlled_timer.value() > 59 and r.driver_controlled_timer.value() < 59.1:
+            controller_1.rumble(".")
+            controller_2.rumble(".")
 
         # Update previous controller states so we can track what the controller did before, we use this so that we can see if a button was pressed, not held, etc.
         previous_controller_states = {
@@ -2919,6 +2849,7 @@ auto_intake_on_forever = [
         "wait" : 999
     }
 ]
+
 auto_test_odometry = [
     {
         "override_velocity_theta": None,
@@ -2936,7 +2867,7 @@ auto_test_odometry = [
         "intake_speed": 0,
         "message": "Move towards the rollers",
         "flywheel_speed": 0,
-        "x_pos": -7,
+        "x_pos": -10,
         "y_pos": -16.5,
     },
     {
@@ -2980,30 +2911,30 @@ auto_test_odometry = [
         "roller_spin_for" : 0.5,
     },
     {
-        "flywheel_speed": 34,
+        "flywheel_speed": 33,
     },
     {
         "launch_expansion": False,
         "theta": 90,
         "intake_speed": 0,
         "message": "This is state #3!",
-        "x_pos": 100,
+        "x_pos": 101,
         "y_pos": 13,
     },
     {
-        "theta" : 93,
+        "theta" : 90,
     },
     {
         "shoot_disc" : 1,
     },
     {
-        "wait" : 0.5,
+        "wait" : 0.7,
     },
     {
         "shoot_disc" : 1,
     },
     {
-        "wait" : 0.5,
+        "wait" : 1,
     },
     {
         "shoot_disc" : 1,
@@ -3076,7 +3007,7 @@ auto_test_odometry = [
         "intake_speed": 0,
         "message": "This is state #4!",
         "flywheel_speed": 32,
-        "x_pos": 200,
+        "x_pos": 208,
         "y_pos": 120,
     },
     {
@@ -3089,7 +3020,7 @@ auto_test_odometry = [
         "shoot_disc" : 1,
     },
     {
-        "wait" : 0.7,
+        "wait" : 1,
     },
     {
         "shoot_disc" : 1,
@@ -3100,7 +3031,7 @@ auto_test_odometry = [
         "intake_speed": 0,
         "message": "This is state #1!",
         "flywheel_speed": 0,
-        "x_pos": 200,
+        "x_pos": 208,
         "y_pos": 120.9,
     },
     {
@@ -3109,7 +3040,7 @@ auto_test_odometry = [
         "intake_speed": 0,
         "message": "This is state #1!",
         "flywheel_speed": 0,
-        "x_pos": 200,
+        "x_pos": 208,
         "y_pos": 210,
     },
 
@@ -3123,7 +3054,7 @@ auto_test_odometry = [
         "y_pos": 210,
     },
     {
-        "roller_spin_for" : 0.5,
+        "roller_spin_for" : 0.6,
         "message" : "Doing the third roller!",
     },
     {
@@ -3166,7 +3097,7 @@ auto_test_odometry = [
         "y_pos": 276.5,
     },
     {
-        "roller_spin_for" : 0.5,
+        "roller_spin_for" : 0.6,
         "message" : "Doing the 4th roller",
     },
     {
@@ -3202,12 +3133,11 @@ auto_test = [
         "set_theta": 0,
     },
     {
-        "autonomous_speed" : 0.25,
-        "y_pos" : 20,
+        "autonomous_speed" : 0.4,
+        "y_pos" : 200,
+        "timeout" : 2,
     },
 ]
-
-
 
 field_length = 356  # CM
 
@@ -3246,7 +3176,7 @@ gui.add_page([
     Button("Go To Debug", 360, 200, 120, 40, (0xAAAAAA), lambda: gui.set_page(1)),
 
     # Auto Selector
-    Switch(["3-Square", "2-Square", "SKILLS", "ShootDiscs", "Intake Forever", "Temp", "Test"], 0, 120, 120, 40, [0x33FF33, 0x33CC33, 0x33AA33, 0x339933, 0x337733, 0x335533,0x333333], lambda auto_mode: r.set_autonomous_procedure(auto_mode), [match_auto_three_squares, match_auto_two_squares, skills_auto, shoot_discs_auto_program, auto_intake_on_forever, auto_test_odometry, auto_test]),
+    Switch(["3-Square", "2-Square", "SKILLS", "ShootDiscs", "Intake Forever", "Temp", "Test"], 0, 120, 120, 40, [0x33FF33, 0x33CC33, 0x33AA33, 0x339933, 0x337733, 0x335533,0x333333], lambda auto_mode: r.set_autonomous_procedure(auto_mode), [match_auto_three_squares, match_auto_two_squares, auto_test_odometry, auto_test_odometry, auto_intake_on_forever, auto_test_odometry, auto_test]),
     Button("Run auto", 0, 160, 120, 40, (0xAAAAAA), lambda: r.run_autonomous()),
     Switch(["2-Controller", "1-Controller"], 240, 160, 120, 80, [0xCCAAAA, 0xCCAACC], lambda value: set_debug_value(value), (False, True))
 ])
@@ -3267,7 +3197,6 @@ gui.add_page([
     Switch(["GPS", "No GPS"], 120, 160, 120, 40, [Color(0x88AA88), Color(0xAA8888)], [r.set_target_state] * 2, [{"use_gps" : True}, {"use_gps" : False}]),
    
     Text("", 0, 200, 120, 40, (Color.BLACK), lambda: f("State #", len(r.path)),), 
-    
     
     Button("Add to Path", 120, 200, 120, 40, (0xAAFAAA), lambda: r.save_state),
     # Save the path by printing the representation (in the future it can be saved to sd car), 
@@ -3341,10 +3270,6 @@ def test_drivetrain():
 
 def output_data():
     # Print the flywheel torque
-    # Prints the efficiency of the motors:
-    # print(brain.timer.value(), flywheel_motor_1.velocity(PERCENT), flywheel_motor_2.velocity(PERCENT))
-    # Display the flywheel speed and the robot theta from [-180 to 180]
-    # print(brain.timer.value(), left_motor_a.position(DEGREES), right_motor_a.position(DEGREES), left_motor_b.position(DEGREES), right_motor_b.position(DEGREES))
     # print(brain.timer.value(), flywheel_motor_1.velocity(PERCENT), flywheel_motor_2.velocity(PERCENT))
     pass
 
