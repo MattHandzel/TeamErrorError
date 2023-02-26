@@ -1842,13 +1842,15 @@ class Robot:
         t = Timer()
         t.reset()
         
-        while not self["disc_shot"] and t.time() < 1250:
+        while not self["disc_shot"] and t.time() < 1000:
             wait(0.01, SECONDS)
 
         indexer.close()
+
+        t.reset()
         
         # wait for the limit switch to be swticehd
-        while not (indexer_limit_switch.value() == 0):
+        while not (indexer_limit_switch.value() == 0) and t.time() < 1000:
             wait(0.01, SECONDS)
 
         self.shoot_disc -= 1
@@ -2208,11 +2210,9 @@ def driver_control():
             r.set_target_state(
                 {
                     # In order to get the angle to an object take the atan2 of the d_x, d_y, then subtract the theta offset to convert it back to the robots local coordinate frame
-                    "theta" : get_angle_to_object((r.x_from_gps, r.y_from_gps), (goal.x_pos, goal.y_pos)) - r.theta_offset,
+                    "theta" : get_angle_to_object((r.x_from_gps, r.y_from_gps), (goal.x_pos, goal.y_pos)) - r.theta_offset + 11,
                 }
             )
-
-
         
         if (controller_1.buttonDown.pressing() and not previous_controller_states["buttonDown"]):
             r.set_target_state({
@@ -2862,7 +2862,8 @@ auto_test_odometry = [
     },
     {
         "roller_spin_for" : 0.6,
-        "message" : "Doing the rollers!"
+        "message" : "Doing the rollers!",
+        "wait" : 0.1,
     },
     {
         "x_pos": 7,
@@ -2891,21 +2892,22 @@ auto_test_odometry = [
         "message": "About to do the other roller!",
         "flywheel_speed": 0,
         "x_pos": -55,
-        "y_pos": 7,
+        "y_pos": 9.4,
     },
     {
         "intake_speed": 0,
-        "x_pos": -65,
+        "x_pos": -66,
     },
     {
-        "theta" : 89,
+        "theta" : 91,
     },
     {
-        "roller_spin_for" : 0.6,
+        "roller_spin_for" : 0.62,
+        "wait" : 0.1,
     },
     {
         "theta" : 90,
-        "flywheel_speed": 54,
+        "flywheel_speed": 53.5,
     },
     {
         "launch_expansion": False,
@@ -2916,22 +2918,19 @@ auto_test_odometry = [
         "y_pos": 15,
     },
     {
-        "theta" : 101,
+        "theta" : 100.5,
     },
     {
         "shoot_disc" : 1,
+        "wait" : 1,
     },
     {
+        "shoot_disc" : 1,
         "wait" : 0.7,
     },
     {
         "shoot_disc" : 1,
-    },
-    {
         "wait" : 0.7,
-    },
-    {
-        "shoot_disc" : 1,
     },
     {
         "shoot_disc" : 1,
@@ -3003,28 +3002,22 @@ auto_test_odometry = [
         "intake_speed": 0,
         "message": "This is state #4!",
         "x_pos": 208,
-        "y_pos": 122,
+        "y_pos": 125,
     },
     {
         "theta" : 192,
     },
     {
         "shoot_disc" : 1,
-    },
-    {
-        "wait" : 0.7,
-    },
-    {
-        "shoot_disc" : 1,
-    },
-    {
         "wait" : 1,
     },
     {
         "shoot_disc" : 1,
+        "wait" : 1,
     },
     {
         "shoot_disc" : 1,
+        "wait" : 1.2,
     },
     {
         "launch_expansion": False,
@@ -3040,7 +3033,7 @@ auto_test_odometry = [
         "message": "This is state #1!",
         "flywheel_speed": 0,
         "x_pos": 208,
-        "y_pos": 218,
+        "y_pos": 229,
     },
 
     {
@@ -3050,11 +3043,12 @@ auto_test_odometry = [
         "message": "This is state #2!",
         "flywheel_speed": 0,
         "x_pos": 238,
-        "y_pos": 218.5,
+        "y_pos": 229,
     },
     {
-        "roller_spin_for" : 0.65,
+        "roller_spin_for" : 0.6,
         "message" : "Doing the third roller!",
+        "wait" : 0.1,
     },
     {
         "launch_expansion": False,
@@ -3063,7 +3057,7 @@ auto_test_odometry = [
         "message": "This is state #3!",
         "flywheel_speed": 0,
         "x_pos": 176,
-        "y_pos": 218,
+        "y_pos": 229,
     },
 
     {
@@ -3073,35 +3067,36 @@ auto_test_odometry = [
         "message": "This is state #4!",
         "flywheel_speed": 0,
         "x_pos": 176,
-        "y_pos": 218,
+        "y_pos": 229,
     },
 
     {
         "launch_expansion": False,
-        "theta": 180.1,
+        "theta": 180,
         "intake_speed": 100,
         "message": "This is state #5!",
         "flywheel_speed": 0,
         "x_pos": 176,
-        "y_pos": 246,
+        "y_pos": 252,
     },
 
     {
         "launch_expansion": False,
-        "theta": 180.5,
+        "theta": 180,
         "intake_speed": 0,
         "message": "This is state #6!",
         "flywheel_speed": 0,
         "x_pos": 176,
-        "y_pos": 287.5,
+        "y_pos": 296,
     },
     {
         "roller_spin_for" : 0.6,
         "message" : "Doing the 4th roller",
+        "wait" : 0.1,
     },
     {
-        "x_pos": 200,
-        "y_pos": 242,
+        "x_pos": 215,
+        "y_pos": 265,
     },
     {
         "launch_expansion": False,
@@ -3109,8 +3104,8 @@ auto_test_odometry = [
         "intake_speed": 0,
         "message": "This is state #2!",
         "flywheel_speed": 0,
-        "x_pos": 203,
-        "y_pos": 245,
+        "x_pos": 215,
+        "y_pos": 265,
     },
     {
         "launch_expansion": True,
@@ -3119,6 +3114,85 @@ auto_test_odometry = [
     {
         "wait" : 1,
     }
+]
+
+expansion_only = [
+        {
+        "override_velocity_theta": None,
+        "drone_mode": True,
+        "override_velocity_x": None,
+        "override_velocity_y": None,
+        "set_x": 0,
+        "set_y": 0,
+        "set_theta": 0,
+        "autonomous_speed" : 0.54,
+    },
+    {
+        "launch_expansion": False,
+        "theta": 360,
+        "intake_speed": 0,
+        "message": "Move towards the rollers",
+        "flywheel_speed": 0,
+        "x_pos": -11,
+        "y_pos": -14,
+    },
+    {
+        "roller_spin_for" : 0.6,
+        "message" : "Doing the rollers!",
+        "wait" : 0.1,
+    },
+    {
+        "x_pos": 7,
+        "y_pos": 3,
+    },
+    {
+        "launch_expansion": False,
+        "theta": 90,
+        "intake_speed": 0,
+        "message": "Rotating the robot!",
+        "flywheel_speed": 0,
+    },
+    {
+        "launch_expansion": False,
+        "theta": 90,
+        "intake_speed": 100,
+        "message": "This is state #4!",
+        "flywheel_speed": 0,
+        "x_pos": 5,
+        "y_pos": 16,
+    },
+    {
+        "launch_expansion": False,
+        "theta": 90,
+        "intake_speed": 100,
+        "message": "About to do the other roller!",
+        "flywheel_speed": 0,
+        "x_pos": -55,
+        "y_pos": 9.4,
+    },
+    {
+        "intake_speed": 0,
+        "x_pos": -65,
+    },
+    {
+        "theta" : 89,
+    },
+    {
+        "roller_spin_for" : 0.6,
+        "wait" : 0.1,
+    },
+    {
+        "x_pos": -40,
+        "y_pos": -5,
+    },
+    {
+        "theta" : 45,
+    },
+    {
+        # EXPANSION
+        "launch_expansion": True,
+        "wait" : 1,
+    },
 ]
 
 auto_test = [
