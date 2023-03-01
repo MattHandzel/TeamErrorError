@@ -693,7 +693,7 @@ class Robot:
     total_x_from_encoders = 0
     total_y_from_encoders = 0
 
-    gps_theta_on_robot = 90 # gps is 90 deg to the right from the center of the robot
+    gps_theta_on_robot = 0 # gps is 90 deg to the right from the center of the robot
 
     delta_x_field_from_encoders = 0
     delta_y_field_from_encoders = 0
@@ -712,7 +712,8 @@ class Robot:
 
     theta_field = 0
 
-
+    x_from_gps_robots_reference_frame = 0
+    y_from_gps_robots_reference_frame = 0
 
     # * FLYWHEEL
     length: float = 38.1
@@ -774,7 +775,7 @@ class Robot:
     autonomous_speed: float = 0.48
     
     # * MISC
-    update_loop_delay = 0.006  # 10 ms
+    update_loop_delay = 0.000 # 10 ms
 
     # Used to keep track of time in auto and driver mode respectively, use it for nicely logging data, can be used during either modes for end game/pathfinding rules
     autonomous_timer = Timer()
@@ -1026,16 +1027,25 @@ class Robot:
         delta_y = 0
         delta_theta = 0
 
-        # If the target state does not exist then we don't need to move in that direction
+        # # If the target state does not exist then we don't need to move in that direction
+        # if self.target_state["x_pos"] != None:
+        #     delta_x = self.target_state["x_pos"] - self.x_pos
+        
+        # if self.target_state["y_pos"] != None:
+        #     delta_y = self.target_state["y_pos"] - self.y_pos
+
+        # if self.target_state["theta"] != None:
+        #     delta_theta = self.target_state["theta"] - self.theta
+        
         if self.target_state["x_pos"] != None:
-            delta_x = self.target_state["x_pos"] - self.x_pos
+            delta_x = self.target_state["x_pos"] - self.x_from_gps_robots_reference_frame
         
         if self.target_state["y_pos"] != None:
-            delta_y = self.target_state["y_pos"] - self.y_pos
+            delta_y = self.target_state["y_pos"] - self.y_from_gps_robots_reference_frame
 
         if self.target_state["theta"] != None:
             delta_theta = self.target_state["theta"] - self.theta
-
+        
         # Turn via the shortest path
         if delta_theta > 180:
             delta_theta -= 360
@@ -1242,6 +1252,9 @@ class Robot:
         self.total_y_field_from_encoders += self.delta_y_field_from_encoders
     
         self.delta_x_from_gps_robots_reference_frame, self.delta_y_from_gps_robots_reference_frame = rotate_vector_2d(self.delta_x_from_gps, self.delta_y_from_gps, self.initial_theta_field  * DEG_TO_RAD) 
+        
+        self.x_from_gps_robots_reference_frame, self.y_from_gps_robots_reference_frame = rotate_vector_2d(self.x_from_gps - self.initial_x_field, self.y_from_gps - self.initial_y_field, self.initial_theta_field)
+         
         # print(brain.timer.value(), self.delta_x_from_encoders, self.delta_y_from_encoders)
         # encoders_gps_fusion_alpha = 0.1
 
@@ -1275,10 +1288,7 @@ class Robot:
         self["roller_and_intake_motor_2_done"] = roller_and_intake_motor_2.is_done()
         
         if self["roller_and_intake_motor_1_done"] and self["roller_and_intake_motor_2_done"] and not self.previous_state["roller_and_intake_motor_1_done"] and not self.previous_state["roller_and_intake_motor_2_done"]:
-            print("values", roller_and_intake_motor_1.is_done(), roller_and_intake_motor_2.is_done())
             self["roller_spin_for"] = 0
-
-        
 
         
         # if self.previous_state["roller_is_done"] == True and self["roller_is_done"] == False:
@@ -1557,8 +1567,19 @@ class Robot:
         self["override_velocity_x"] = None
         self["override_velocity_y"] = None
         self["override_velocity_theta"] = None
-        
 
+        # Modify the states
+        for step in self.autonomous_procedure:
+            if "position_type" in step:
+                if "position_type" == "field":
+                    # Convert the position to be from the fields perspective to the robots perspective
+                    if "x_pos" and "y_pos" in step:
+                        print("Converting ", step["x_pos"], step["y_pos"], " to ", self.convert_field_to_local_coordinates(step["x_pos"], step["y_pos"]))
+
+                        step["x_pos"], step["y_pos"] = self.convert_field_to_local_coordinates(step["x_pos"], step["y_pos"])
+                    else:
+                        raise Exception("Robot->run_autonomous(): x_pos and y_pos is not in step")
+        
         for step in self.autonomous_procedure:
             target_state = {}
             self["override_velocity_x"] = None
@@ -1982,6 +2003,9 @@ class Robot:
     
     def save_state(self):
         self.path.append(self.return_state_of_auto())
+
+    def convert_field_to_local_coordinates(self, _x, _y):
+        return rotate_vector_2d(_x - self.initial_x_field, _y - self.initial_y_field, self.initial_theta_field)
 
 class Test:
     '''
@@ -3428,17 +3452,17 @@ def test_drivetrain():
             return
 
 # test_drivetrain()
-#test
 def output_data():
     global serial_output_delay
-    serial_output_delay = 0.1
+    serial_output_delay = 0.02
 
-    return
+    # print("real", r.x_from_gps, r.y_from_gps, "delta", r.x_from_gps_robots_reference_frame, r.y_from_gps_robots_reference_frame)
+    print(brain.timer.value(), flywheel_motor_1.velocity())
     
     # Figure out the initial values from the gps
     # print(r.initial_x_field, r.initial_y_field, r.initial_theta_field, r.x_from_gps, r.y_from_gps)
     
-    print(brain.timer.value(), r.x_from_gps, r.y_from_gps, r.total_x_field_from_encoders + r.initial_x_field, r.total_y_field_from_encoders + r.initial_y_field)
+    # print(brain.timer.value(), r.x_from_gps, r.y_from_gps, r.total_x_field_from_encoders + r.initial_x_field, r.total_y_field_from_encoders + r.initial_y_field)
 
     # This will show the variance of the gps and encoders
     # print(brain.timer.value(), r.delta_x_from_gps, r.delta_y_from_gps, r.delta_x_from_encoders, r.delta_y_from_encoders)

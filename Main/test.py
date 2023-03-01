@@ -1,24 +1,18 @@
 import math
-import time
+arr = [2, -1]
 
-# auto_orientate_dictionary = {
-#   0 : controller_1.buttonX.pressing(),
-#   -90 : controller_1.buttonY.pressing(),
-#   90 : controller_1.buttonA.pressing(),
-#   180 : controller_1.buttonB.pressing(),
-# }
 
-auto_orientate_dictionary = {
-  0 : True,
-  -90 : False,
-  90 : False,
-  180 : False,
-}
+def rotate_vector_2d(x, y, theta):
+    '''
+    Rotates a vector by theta degrees
+    '''
+    x_old = x
+    x = x * math.cos(theta) - y * math.sin(theta)
+    y = x_old * math.sin(theta) + y * math.cos(theta)
 
-auto_orientate_total_button_pressed = 1
+    return x, y
 
-total_theta = 0
-for key in auto_orientate_dictionary:
-  if auto_orientate_dictionary[key]:
-    total_theta += key
-print(total_theta / auto_orientate_total_button_pressed)  
+
+x,y = rotate_vector_2d(arr[0], arr[1], math.pi/2)
+print(x,y)
+
