@@ -106,6 +106,44 @@ def get_angle_to_object(pos_1, pos_2):
 
     return ang
 
+def check_intersection(line1, line2):
+    # line1 and line2 are tuples of 4 points (x1, y1, x2, y2)
+    # returns True if they intersect, False otherwise
+    
+    # Prevents divide by 0 error
+    if (line1[2] - line1[0]) == 0:
+        line1[2] += 0.0001
+        line1[0] -= 0.0001
+    if (line2[2] - line2[0]) == 0:
+        line2[2] += 0.0001
+        line2[0] -= 0.0001
+
+    # get the slope and y-intercept of each line
+    m1 = (line1[3] - line1[1]) / (line1[2] - line1[0])
+    m2 = (line2[3] - line2[1]) / (line2[2] - line2[0])
+    b1 = line1[1] - m1 * line1[0]
+    b2 = line2[1] - m2 * line2[0]
+    
+    # if the slopes are equal, they are parallel and don't intersect
+    if m1 == m2:
+        return False
+    
+    # find the point of intersection
+    x = (b2 - b1) / (m1 - m2)
+    y = m1 * x + b1
+    
+    # check if the point of intersection is within the line segments
+    if x > max(line1[0], line1[2]) or x < min(line1[0], line1[2]):
+        return False
+    if x > max(line2[0], line2[2]) or x < min(line2[0], line2[2]):
+        return False
+    if y > max(line1[1], line1[3]) or y < min(line1[1], line1[3]):
+        return False
+    if y > max(line2[1], line2[3]) or y < min(line2[1], line2[3]):
+        return False
+    
+    return True
+
 # 53
 def init():
     '''
@@ -149,7 +187,7 @@ def init():
         "using_gps": gps.installed(),
     })
 
-    gps.set_origin(84, 200, MM)
+    gps.set_origin(288, 30, MM)
     
     inertial.calibrate()
 
@@ -684,36 +722,36 @@ class Robot:
     max_velocity: float
     max_acceleration: float
 
-    previous_x_from_encoders = 0
-    previous_y_from_encoders = 0
+    previous_x_encoders_relative = 0
+    previous_y_encoders_relative = 0
 
-    previous_x_from_gps = 0
-    previous_y_from_gps = 0
+    previous_x_gps_field = 0
+    previous_y_gps_field = 0
 
-    total_x_from_encoders = 0
-    total_y_from_encoders = 0
+    x_encoders_relative = 0
+    y_encoders_relative = 0
 
     gps_theta_on_robot = 0 # gps is 90 deg to the right from the center of the robot
 
-    delta_x_field_from_encoders = 0
-    delta_y_field_from_encoders = 0
+    delta_x_encoders_field = 0
+    delta_y_encoders_field = 0
 
-    delta_x_from_encoders = 0
-    delta_y_from_encoders = 0
+    delta_x_encoders_relative = 0
+    delta_y_encoders_relative = 0
 
-    total_x_field_from_encoders = 0
-    total_y_field_from_encoders = 0
+    x_encoders_field = 0
+    y_encoders_field = 0
 
-    delta_x_from_gps_robots_reference_frame = 0
-    delta_y_from_gps_robots_reference_frame = 0
+    delta_x_gps_relative = 0
+    delta_y_gps_relative = 0
     
-    delta_x_from_gps = 0
-    delta_y_from_gps = 0
+    delta_x_gps_field = 0
+    delta_y_gps_field = 0
 
     theta_field = 0
 
-    x_from_gps_robots_reference_frame = 0
-    y_from_gps_robots_reference_frame = 0
+    x_gps_relative = 0
+    y_gps_relative = 0
 
     # * FLYWHEEL
     length: float = 38.1
@@ -775,7 +813,7 @@ class Robot:
     autonomous_speed: float = 0.48
     
     # * MISC
-    update_loop_delay = 0.000 # 10 ms
+    update_loop_delay = 0.006 # 10 ms
 
     # Used to keep track of time in auto and driver mode respectively, use it for nicely logging data, can be used during either modes for end game/pathfinding rules
     autonomous_timer = Timer()
@@ -833,6 +871,9 @@ class Robot:
         "theta" : 0,
         "theta_vel" : 0,
         "time" : 0,
+
+        "min_velocity" : 0,
+        "tolerance" : 0.5,
 
 
         "autonomous_speed" : 0,
@@ -954,7 +995,7 @@ class Robot:
                 initial_x_positions.append(gps.x_position(DistanceUnits.CM))
                 initial_y_positions.append(gps.y_position(DistanceUnits.CM))
                 initial_theta_positions.append(gps.heading())
-                wait(0.05, SECONDS)
+                wait(0.02, SECONDS)
 
             self.initial_x_field = sum(initial_x_positions) / len(initial_x_positions)
             self.initial_y_field = sum(initial_y_positions) / len(initial_y_positions)
@@ -1028,23 +1069,23 @@ class Robot:
         delta_theta = 0
 
         # # If the target state does not exist then we don't need to move in that direction
-        # if self.target_state["x_pos"] != None:
-        #     delta_x = self.target_state["x_pos"] - self.x_pos
-        
-        # if self.target_state["y_pos"] != None:
-        #     delta_y = self.target_state["y_pos"] - self.y_pos
-
-        # if self.target_state["theta"] != None:
-        #     delta_theta = self.target_state["theta"] - self.theta
-        
         if self.target_state["x_pos"] != None:
-            delta_x = self.target_state["x_pos"] - self.x_from_gps_robots_reference_frame
+            delta_x = self.target_state["x_pos"] - self.x_pos
         
         if self.target_state["y_pos"] != None:
-            delta_y = self.target_state["y_pos"] - self.y_from_gps_robots_reference_frame
+            delta_y = self.target_state["y_pos"] - self.y_pos
 
         if self.target_state["theta"] != None:
             delta_theta = self.target_state["theta"] - self.theta
+        
+        # if self.target_state["x_pos"] != None:
+        #     delta_x = self.target_state["x_pos"] - self.x_gps_relative
+        
+        # if self.target_state["y_pos"] != None:
+        #     delta_y = self.target_state["y_pos"] - self.y_gps_relative
+
+        # if self.target_state["theta"] != None:
+        #     delta_theta = self.target_state["theta"] - self.theta
         
         # Turn via the shortest path
         if delta_theta > 180:
@@ -1054,6 +1095,8 @@ class Robot:
 
         orientation_tolerance = 9
         position_tolerance = 14
+
+        max_velocity = 100
 
         # Make sqrt the delta theta, so that the tolerance is not linear but a sqrt relationshup
         delta_theta = math.sqrt(abs(delta_theta)) * sign(delta_theta) 
@@ -1065,12 +1108,40 @@ class Robot:
         # target_x_vel = ((clamp(delta_x, position_tolerance, -position_tolerance) * 100 / position_tolerance) ** 2) / 100 * sign(delta_x) * (0.5 if self.running_autonomous else 1)
         # target_y_vel = ((clamp(delta_y, position_tolerance, -position_tolerance) * 100 / position_tolerance) ** 2) / 100 * sign(delta_y) * (0.5 if self.running_autonomous else 1)
         
-        target_y_vel = clamp(delta_y, position_tolerance, -position_tolerance) * 100/position_tolerance * (self.autonomous_speed if self.running_autonomous else 1)
-        target_x_vel = clamp(delta_x, position_tolerance, -position_tolerance) * 100/position_tolerance * (self.autonomous_speed if self.running_autonomous else 1)
+        target_x_vel = clamp(delta_x, position_tolerance, -position_tolerance) * max_velocity/position_tolerance * (self.autonomous_speed if self.running_autonomous else 1)
+        target_y_vel = clamp(delta_y, position_tolerance, -position_tolerance) * max_velocity/position_tolerance * (self.autonomous_speed if self.running_autonomous else 1)
 
-        target_theta_vel = ((clamp(delta_theta, orientation_tolerance, -orientation_tolerance) * 100 / (orientation_tolerance - 3)) ** 2) / 100 * sign(delta_theta) * (1 if self.running_autonomous else 1)
+
+
+        # k_p = 0.0001
+        # target_x_vel = (max_velocity + (k_p * ((self["tolerance"]/k_p) - (min(abs(delta_x), self["tolerance"]/k_p))) / self["tolerance"]) * (self["min_velocity"] - max_velocity)) * sign(delta_x) 
         
-        target_theta_vel = clamp(target_theta_vel, 100, -100)
+        # target_y_vel = (max_velocity + (k_p * ((self["tolerance"]/k_p) - (min(abs(delta_y), self["tolerance"]/k_p))) / self["tolerance"]) * (self["min_velocity"] - max_velocity)) * sign(delta_y)
+
+        # angle to target
+        ang = atan2(delta_y, delta_x)
+        distance = sqrt(delta_x**2 + delta_y**2)
+
+        k_p = 0.1
+        target_total_vel = (max_velocity + (k_p * ((self["tolerance"]/k_p) - (min(abs(distance), self["tolerance"]/k_p))) / self["tolerance"]) * (self["min_velocity"] - max_velocity)) * (self.autonomous_speed if self.running_autonomous else 1)
+
+        target_x_vel = target_total_vel * cos(ang)
+        target_y_vel = target_total_vel * sin(ang)
+
+        # target_x_vel = (max_velocity + (k_p * ((self["tolerance"]/k_p) - (min(abs(delta_x), self["tolerance"]/k_p))) / self["tolerance"]) * (self["min_velocity"] - max_velocity)) * sign(delta_x) 
+        
+        # target_y_vel = (max_velocity + (k_p * ((self["tolerance"]/k_p) - (min(abs(delta_y), self["tolerance"]/k_p))) / self["tolerance"]) * (self["min_velocity"] - max_velocity)) * sign(delta_y)
+
+        # print(delta_y, (k_p * ((self["tolerance"]/k_p) - (min(abs(delta_y), self["tolerance"]/k_p))) / self["tolerance"]) * (self["min_velocity"] - max_velocity), target_y_vel, self["tolerance"], self["min_velocity"])
+        
+        
+        target_x_vel = clamp(target_x_vel, max_velocity, -max_velocity) * (self.autonomous_speed if self.running_autonomous else 1)
+        target_y_vel = clamp(target_y_vel, max_velocity, -max_velocity) * (self.autonomous_speed if self.running_autonomous else 1)
+
+
+        target_theta_vel = ((clamp(delta_theta, orientation_tolerance, -orientation_tolerance) * max_velocity / (orientation_tolerance - 3)) ** 2) / max_velocity * sign(delta_theta) * (1 if self.running_autonomous else 1)
+        
+        target_theta_vel = clamp(target_theta_vel, max_velocity, -max_velocity)
 
         if self.target_state["override_velocity_x"] != None:
             target_x_vel = self.target_state["override_velocity_x"]
@@ -1089,11 +1160,10 @@ class Robot:
             target_y_vel = target_y_vel / 4
             target_theta_vel = target_theta_vel / 4
         
-        max_speed_percentage = 100
-        if max_speed_percentage - abs(target_theta_vel) < abs(target_x_vel) + abs(target_y_vel) and self.running_autonomous:
+        if max_velocity - abs(target_theta_vel) < abs(target_x_vel) + abs(target_y_vel) and self.running_autonomous:
             # print("previous X, y, theta", target_x_vel, target_y_vel, target_theta_vel)
-            target_x_vel = (max_speed_percentage - abs(target_theta_vel)) * target_x_vel / (abs(target_x_vel) + abs(target_y_vel))
-            target_y_vel = (max_speed_percentage - abs(target_theta_vel)) * target_y_vel / (abs(target_x_vel) + abs(target_y_vel))
+            target_x_vel = (max_velocity - abs(target_theta_vel)) * target_x_vel / (abs(target_x_vel) + abs(target_y_vel))
+            target_y_vel = (max_velocity - abs(target_theta_vel)) * target_y_vel / (abs(target_x_vel) + abs(target_y_vel))
             # print("after X, y, theta", target_x_vel, target_y_vel, target_theta_vel)
 
         # Get the motor powers
@@ -1124,18 +1194,18 @@ class Robot:
             max_acceleration_right_motor_b = self.max_acceleration * 0.5
         
         # Okie doki, this line is gonna need some documentation, but first some labels:
-        # (self.max_acceleration / self.max_velocity * 100) means the maximum acceleration of our robot IN A PERCENTAGE (i.e. 10 percent per second, 50 percent per second, -10 percent, per second)
-        # (self.max_acceleration / self.max_velocity * 100) * self.delta_time is the maximum change in velocity of the robot FOR THIS RUN THROUGH THE LOOP (by multipling by delta time we get how long its been since the last loop, which means we can change our velocity by that change in time time acceleration), Ex. if its been 0.1 seconds since the last loop, then our change in velocity can be 10 percent, but if it was 1 second then our change in velocity can be 100 percent beceause its been such a long time (if you still don't understand then learn what integration is)
+        # (self.max_acceleration / self.max_velocity * max_velocity) means the maximum acceleration of our robot IN A PERCENTAGE (i.e. 10 percent per second, 50 percent per second, -10 percent, per second)
+        # (self.max_acceleration / self.max_velocity * max_velocity) * self.delta_time is the maximum change in velocity of the robot FOR THIS RUN THROUGH THE LOOP (by multipling by delta time we get how long its been since the last loop, which means we can change our velocity by that change in time time acceleration), Ex. if its been 0.1 seconds since the last loop, then our change in velocity can be 10 percent, but if it was 1 second then our change in velocity can be max_velocity percent beceause its been such a long time (if you still don't understand then learn what integration is)
         # the goal of the following lines is to clamp the change in velocity to not go over some number (max_acceleration),
         # so in order to do that we clamp motor_target_velocity between the motor_current_velocity plus the maximum change in velocity for this run of the loop, repeat for each wheel
-        left_motor_a_target_velocity = clamp(left_motor_a_target_velocity, (max_acceleration_left_motor_a / self.max_velocity * 100) * self.delta_time + left_motor_a.velocity(
-            PERCENT), -(max_acceleration_left_motor_a / self.max_velocity * 100) * self.delta_time + left_motor_a.velocity(PERCENT))
-        right_motor_a_target_velocity = clamp(right_motor_a_target_velocity, (max_acceleration_right_motor_a / self.max_velocity * 100) * self.delta_time + right_motor_a.velocity(
-            PERCENT), -(max_acceleration_right_motor_a / self.max_velocity * 100) * self.delta_time + right_motor_a.velocity(PERCENT))
-        left_motor_b_target_velocity = clamp(left_motor_b_target_velocity, (max_acceleration_left_motor_b / self.max_velocity * 100) * self.delta_time + left_motor_b.velocity(
-            PERCENT), -(max_acceleration_left_motor_b / self.max_velocity * 100) * self.delta_time + left_motor_b.velocity(PERCENT))
-        right_motor_b_target_velocity = clamp(right_motor_b_target_velocity, (max_acceleration_right_motor_b / self.max_velocity * 100) * self.delta_time + right_motor_b.velocity(
-            PERCENT), -(max_acceleration_right_motor_b / self.max_velocity * 100) * self.delta_time + right_motor_b.velocity(PERCENT))
+        left_motor_a_target_velocity = clamp(left_motor_a_target_velocity, (max_acceleration_left_motor_a / self.max_velocity * max_velocity) * self.delta_time + left_motor_a.velocity(
+            PERCENT), -(max_acceleration_left_motor_a / self.max_velocity * max_velocity) * self.delta_time + left_motor_a.velocity(PERCENT))
+        right_motor_a_target_velocity = clamp(right_motor_a_target_velocity, (max_acceleration_right_motor_a / self.max_velocity * max_velocity) * self.delta_time + right_motor_a.velocity(
+            PERCENT), -(max_acceleration_right_motor_a / self.max_velocity * max_velocity) * self.delta_time + right_motor_a.velocity(PERCENT))
+        left_motor_b_target_velocity = clamp(left_motor_b_target_velocity, (max_acceleration_left_motor_b / self.max_velocity * max_velocity) * self.delta_time + left_motor_b.velocity(
+            PERCENT), -(max_acceleration_left_motor_b / self.max_velocity * max_velocity) * self.delta_time + left_motor_b.velocity(PERCENT))
+        right_motor_b_target_velocity = clamp(right_motor_b_target_velocity, (max_acceleration_right_motor_b / self.max_velocity * max_velocity) * self.delta_time + right_motor_b.velocity(
+            PERCENT), -(max_acceleration_right_motor_b / self.max_velocity * max_velocity) * self.delta_time + right_motor_b.velocity(PERCENT))
         
         # Accelerate the motors to the target velocity.
         left_motor_a.spin(FORWARD, left_motor_a_target_velocity, PERCENT)
@@ -1180,15 +1250,15 @@ class Robot:
         self.x_enc, self.y_enc = self.get_position_from_encoders()
 
         # Find our delta encoders amount
-        self.delta_x_from_encoders = self.x_enc - self.previous_state["x_enc"]
-        self.delta_y_from_encoders = self.y_enc - self.previous_state["y_enc"]
+        self.delta_x_encoders_relative = self.x_enc - self.previous_state["x_enc"]
+        self.delta_y_encoders_relative = self.y_enc - self.previous_state["y_enc"]
 
         # Rotate the numbers based on our orientation relative to the robot
-        self.delta_x_from_encoders, self.delta_y_from_encoders = rotate_vector_2d(self.delta_x_from_encoders, self.delta_y_from_encoders, -self.theta * DEG_TO_RAD)
+        self.delta_x_encoders_relative, self.delta_y_encoders_relative = rotate_vector_2d(self.delta_x_encoders_relative, self.delta_y_encoders_relative, -self.theta * DEG_TO_RAD)
 
         # Get the velocity of the robot in deg/s for 4 wheels
-        self.x_vel = self.delta_x_from_encoders / self.delta_time
-        self.y_vel = self.delta_y_from_encoders / self.delta_time
+        self.x_vel = self.delta_x_encoders_relative / self.delta_time
+        self.y_vel = self.delta_y_encoders_relative / self.delta_time
 
         # Velocity of robot from gps perspective
         x_from_gps = 0
@@ -1196,8 +1266,8 @@ class Robot:
         theta_field = 0
         gps_encoder_blend_alpha = 0
 
-        self.delta_x_from_gps = 0
-        self.delta_y_from_gps = 0
+        self.delta_x_gps_field = 0
+        self.delta_y_gps_field = 0
 
         # If the gps is being used and not being obstructed
         if self.using_gps and gps.quality() >= 100: 
@@ -1215,11 +1285,11 @@ class Robot:
             theta_field = gps.rotation() - self.gps_theta_on_robot
 
             # If we want to figure out our velocity from the gps
-            self.delta_x_from_gps = gps.x_position(DistanceUnits.CM) - self.previous_x_from_gps 
-            self.delta_y_from_gps = gps.y_position(DistanceUnits.CM) - self.previous_y_from_gps 
+            self.delta_x_gps_field = gps.x_position(DistanceUnits.CM) - self.previous_x_gps_field 
+            self.delta_y_gps_field = gps.y_position(DistanceUnits.CM) - self.previous_y_gps_field 
 
-            self.previous_x_from_gps = gps.x_position(DistanceUnits.CM)
-            self.previous_y_from_gps = gps.y_position(DistanceUnits.CM)
+            self.previous_x_gps_field = gps.x_position(DistanceUnits.CM)
+            self.previous_y_gps_field = gps.y_position(DistanceUnits.CM)
 
             # print("Position from gps is", x_from_gps, y_from_gps, theta_from_gps)
 
@@ -1232,28 +1302,29 @@ class Robot:
 
         # If we have not moved (from the encoders point of view), and the gps is not changing that much, then use the rolling average from the gps
         # If gps is enabled then the low and high pass filter will make the x and y position more stable, if gps is not enabled then the formula won't use gps data (alpha would equal 0)
-        self.x_pos += self.delta_x_from_encoders * (1-gps_encoder_blend_alpha) + (self.delta_x_from_gps-self.x_pos) * gps_encoder_blend_alpha 
-        self.y_pos += self.delta_y_from_encoders * (1-gps_encoder_blend_alpha) + (self.delta_y_from_gps-self.y_pos) * gps_encoder_blend_alpha
+        self.x_pos += self.delta_x_encoders_relative * (1-gps_encoder_blend_alpha) + (self.delta_x_gps_field-self.x_pos) * gps_encoder_blend_alpha 
+        self.y_pos += self.delta_y_encoders_relative * (1-gps_encoder_blend_alpha) + (self.delta_y_gps_field-self.y_pos) * gps_encoder_blend_alpha
         
-        gps_alpha = 1 * self.delta_time
+        gps_alpha = 20
+        gps_alpha = clamp(gps_alpha * self.delta_time, 1, 0)
+        
         self.x_from_gps = self.x_from_gps * (1-gps_alpha) + x_from_gps * gps_alpha
         self.y_from_gps = self.y_from_gps * (1-gps_alpha) + y_from_gps * gps_alpha
 
         self.theta_field = theta_field
         
-        self.total_x_from_encoders += self.delta_x_from_encoders
-        self.total_y_from_encoders += self.delta_y_from_encoders
-
+        self.x_encoders_relative += self.delta_x_encoders_relative
+        self.y_encoders_relative += self.delta_y_encoders_relative
 
         # Rotate the delta_x from the encoders to be relative to the field instead of relative to the robot
-        self.delta_x_field_from_encoders, self.delta_y_field_from_encoders = rotate_vector_2d(self.delta_x_from_encoders, self.delta_y_from_encoders, -self.theta_field  * DEG_TO_RAD)
+        self.delta_x_encoders_field, self.delta_y_encoders_field = rotate_vector_2d(self.delta_x_encoders_relative, self.delta_y_encoders_relative, -self.theta_field  * DEG_TO_RAD)
 
-        self.total_x_field_from_encoders += self.delta_x_field_from_encoders
-        self.total_y_field_from_encoders += self.delta_y_field_from_encoders
+        self.x_encoders_field += self.delta_x_encoders_field
+        self.y_encoders_field += self.delta_y_encoders_field
     
-        self.delta_x_from_gps_robots_reference_frame, self.delta_y_from_gps_robots_reference_frame = rotate_vector_2d(self.delta_x_from_gps, self.delta_y_from_gps, self.initial_theta_field  * DEG_TO_RAD) 
+        self.delta_x_gps_relative, self.delta_y_gps_relative = rotate_vector_2d(self.delta_x_gps_field, self.delta_y_gps_field, self.initial_theta_field  * DEG_TO_RAD) 
         
-        self.x_from_gps_robots_reference_frame, self.y_from_gps_robots_reference_frame = rotate_vector_2d(self.x_from_gps - self.initial_x_field, self.y_from_gps - self.initial_y_field, self.initial_theta_field)
+        self.x_gps_relative, self.y_gps_relative = self.convert_field_to_local_coordinates(self.x_from_gps, self.y_from_gps)
          
         # print(brain.timer.value(), self.delta_x_from_encoders, self.delta_y_from_encoders)
         # encoders_gps_fusion_alpha = 0.1
@@ -1262,12 +1333,21 @@ class Robot:
         # if ((abs(self.state["x_pos"] - self.target_state["x_pos"]) < self.position_tolerance and abs(self.state["y_pos"] - self.target_state["y_pos"]) < self.position_tolerance) \
         #     or (self.state["override_velocity_y"] != None or self.state["override_velocity_x"] != None)):
         
-        target_state_position_tolerance = 0.5
+        tolerance = self["tolerance"]
         target_state_theta_tolerance = 0.7
 
-        if self.shoot_disc <= 0 and self["roller_and_intake_motor_1_done"] and self["roller_and_intake_motor_2_done"] and ((abs(self["x_pos"] - self.target_state["x_pos"]) < target_state_position_tolerance and abs(self["y_pos"] - self.target_state["y_pos"]) < target_state_position_tolerance and abs(self["theta"] - self.target_state["theta"]) < target_state_theta_tolerance) or (False)):
-            self.target_reached = True
+        # if self.shoot_disc <= 0 and self["roller_and_intake_motor_1_done"] and self["roller_and_intake_motor_2_done"] and ((abs(self["x_pos"] - self.target_state["x_pos"]) < target_state_position_tolerance and abs(self["y_pos"] - self.target_state["y_pos"]) < target_state_position_tolerance and abs(self["theta"] - self.target_state["theta"]) < target_state_theta_tolerance) or (False)):
+        # distance_to_target_point = sqrt((self["x_pos"] - self.target_state["x_pos"]) ** 2 + (self["y_pos"] - self.target_state["y_pos"]) ** 2)
+        # if self.shoot_disc <= 0 and self["roller_and_intake_motor_1_done"] and self["roller_and_intake_motor_2_done"] and distance_to_target_point < target_state_position_tolerance and abs(self["theta"] - self.target_state["theta"]) < target_state_theta_tolerance:
         
+        # Using the check_if_intersect function, see if the robot passes the line segment that makes up the target position
+        line1 = [self.previous_state["x_pos"], self.previous_state["y_pos"], self.state["x_pos"], self.state["y_pos"]]
+        line2 = [self.target_state["x_pos"] - cos(self.theta * DEG_TO_RAD) * tolerance, self.target_state["y_pos"] - sin(self.theta * DEG_TO_RAD) * tolerance, self.target_state["x_pos"] + cos(self.theta * DEG_TO_RAD) * tolerance, self.target_state["y_pos"] + sin(self.theta * DEG_TO_RAD) * tolerance]
+
+        is_intersecting = check_intersection(line1, line2)
+        print(self.x_pos, self.y_pos)
+        if is_intersecting:
+            self.target_reached = True
 
         # Get the torque on the flywheel
         self["flywheel_1_torque"] = flywheel_motor_1.torque()
@@ -1427,6 +1507,10 @@ class Robot:
             self["roller_spin_for"] = _state["roller_spin_for"]
         if "autonomous_speed" in _state:
             self["autonomous_speed"] = _state["autonomous_speed"]
+        if "min_velocity" in _state:
+            self["min_velocity"] = _state["min_velocity"]
+        if "tolerance" in _state:
+            self["tolerance"] = _state["tolerance"]
 
 
     def __setitem__(self, key, value):
@@ -1571,15 +1655,24 @@ class Robot:
         # Modify the states
         for step in self.autonomous_procedure:
             if "position_type" in step:
-                if "position_type" == "field":
+                print("position type found")
+                if step["position_type"] == "field":
                     # Convert the position to be from the fields perspective to the robots perspective
                     if "x_pos" and "y_pos" in step:
+                        print("Position is", self.initial_x_field, self.initial_y_field, self.initial_theta_field)
                         print("Converting ", step["x_pos"], step["y_pos"], " to ", self.convert_field_to_local_coordinates(step["x_pos"], step["y_pos"]))
 
                         step["x_pos"], step["y_pos"] = self.convert_field_to_local_coordinates(step["x_pos"], step["y_pos"])
                     else:
                         raise Exception("Robot->run_autonomous(): x_pos and y_pos is not in step")
-        
+            
+            if "min_velocity" not in step:
+                step["min_velocity"] = 0
+            
+            if "tolerance" not in step:
+                step["tolerance"] = self.compute_tolerance_for_min_velocity(step["min_velocity"])
+
+        # Run the autonomous procedure
         for step in self.autonomous_procedure:
             target_state = {}
             self["override_velocity_x"] = None
@@ -1821,7 +1914,7 @@ class Robot:
         MAX_VOLTAGE = 10.9 # I don't think this is the true maximum voltage btw
         
         # This so for the derivative term so that it isn't working with the chaotic value of flywheel speed that fluctuates rapidly, but the averaged flywheel speed
-        speed_alpha = 0.2 # was 0.25
+        speed_alpha = 20 #
         speed_alpha = clamp(speed_alpha * self.delta_time, 1, 0)
 
         self.flywheel_1_avg_speed = flywheel_motor_1.velocity(PERCENT) * speed_alpha + self.flywheel_1_avg_speed * (1 - speed_alpha)
@@ -1884,7 +1977,7 @@ class Robot:
         derivative_term_flywheel_2 = max(derivative_term_flywheel_2, -0.5)
         derivative_term_flywheel_2 = min(derivative_term_flywheel_2, 0.5)
         
-        self.integral_term_flywheel_1 += self.delta_time * kI * (self.flywheel_speed - self.flywheel_1_avg_speed) + (self.flywheel_speed - self.previous_flywheel_speed) * 0.108
+        self.integral_term_flywheel_1 += self.delta_time * kI * (self.flywheel_speed - self.flywheel_1_avg_speed) + (self.flywheel_speed - self.previous_flywheel_speed) * 0.09
         self.integral_term_flywheel_2 += self.delta_time * kI * (self.flywheel_speed - self.flywheel_2_avg_speed) + (self.flywheel_speed - self.previous_flywheel_speed) * 0.11 
 
         # Clamp the voltage so we don't send more than the maximum I stated 
@@ -1896,11 +1989,11 @@ class Robot:
             target_flywheel_output_1 = self.integral_term_flywheel_1 + proportional_term_flywheel_1 - derivative_term_flywheel_1
             target_flywheel_output_2 = self.integral_term_flywheel_2 + proportional_term_flywheel_2 - derivative_term_flywheel_2
         else:
-            alpha = 0.1
-            alpha = clamp(alpha * self.delta_time, 1, 0)
+            output_alpha = 5
+            output_alpha = clamp(output_alpha * self.delta_time, 1, 0)
 
-            self.average_target_flywheel_output_1 = self.average_target_flywheel_output_1 * (1-alpha) + (self.integral_term_flywheel_1 + proportional_term_flywheel_1 - derivative_term_flywheel_1) * (alpha)  
-            self.average_target_flywheel_output_2 = self.average_target_flywheel_output_2 * (1-alpha) + (self.integral_term_flywheel_2 + proportional_term_flywheel_2 - derivative_term_flywheel_2) * (alpha)  
+            self.average_target_flywheel_output_1 = self.average_target_flywheel_output_1 * (1-output_alpha) + (self.integral_term_flywheel_1 + proportional_term_flywheel_1 - derivative_term_flywheel_1) * output_alpha  
+            self.average_target_flywheel_output_2 = self.average_target_flywheel_output_2 * (1-output_alpha) + (self.integral_term_flywheel_2 + proportional_term_flywheel_2 - derivative_term_flywheel_2) * output_alpha  
         
             target_flywheel_output_1 = self.average_target_flywheel_output_1
             target_flywheel_output_2 = self.average_target_flywheel_output_2
@@ -1957,8 +2050,6 @@ class Robot:
         self.shoot_disc -= 1
         self.is_shooting = False
 
-
-
     
     def status_update(self):
         
@@ -2005,7 +2096,12 @@ class Robot:
         self.path.append(self.return_state_of_auto())
 
     def convert_field_to_local_coordinates(self, _x, _y):
-        return rotate_vector_2d(_x - self.initial_x_field, _y - self.initial_y_field, self.initial_theta_field)
+        return rotate_vector_2d(_x - self.initial_x_field, _y - self.initial_y_field, self.initial_theta_field * DEG_TO_RAD)
+    
+    def compute_tolerance_for_min_velocity(self, _min_velocity):
+        max_tolerance = 7
+        min_tolerance = 1
+        return (max_tolerance - min_tolerance) * (_min_velocity / 100) + min_tolerance
 
 class Test:
     '''
@@ -3312,15 +3408,7 @@ auto_test = [
         "set_x": 0,
         "set_y": 0,
         "set_theta": 0,
-    },
-    {
-        "autonomous_speed" : 0.4,
-        "roller_spin_for" : 100,
-        "timeout" : 2,
-    },
-    {
-        "message" : "bro you out lmao",
-        "flywheel_speed" : 50,
+        "autonomous_speed" : 0.5,
     },
 ]
 
@@ -3454,21 +3542,16 @@ def test_drivetrain():
 # test_drivetrain()
 def output_data():
     global serial_output_delay
-    serial_output_delay = 0.02
+    serial_output_delay = 0.1
 
     # print("real", r.x_from_gps, r.y_from_gps, "delta", r.x_from_gps_robots_reference_frame, r.y_from_gps_robots_reference_frame)
-    print(brain.timer.value(), flywheel_motor_1.velocity())
-    
-    # Figure out the initial values from the gps
-    # print(r.initial_x_field, r.initial_y_field, r.initial_theta_field, r.x_from_gps, r.y_from_gps)
-    
-    # print(brain.timer.value(), r.x_from_gps, r.y_from_gps, r.total_x_field_from_encoders + r.initial_x_field, r.total_y_field_from_encoders + r.initial_y_field)
+    # print(brain.timer.value(), flywheel_motor_1.velocity())
+    # print(brain.timer.value(), r.initial_theta_field)
 
-    # This will show the variance of the gps and encoders
-    # print(brain.timer.value(), r.delta_x_from_gps, r.delta_y_from_gps, r.delta_x_from_encoders, r.delta_y_from_encoders)
-
-    # This will show if robot and field are aligned
-    # print(brain.timer.value(), r.x_from_gps, r.y_from_gps, r.total_x_field_from_encoders, r.total_y_field_from_encoders)
+    # Double check to see if this goes in the right direction(s)
+    print(brain.timer.value(), r.x_from_gps, r.y_from_gps, r.x_encoders_field + r.initial_x_field, r.y_encoders_field + r.initial_y_field)
+    
+    # print(brain.timer.value(), r.x_encoders_relative, r.y_encoders_relative, r.x_encoders_field, r.y_encoders_field)
 
     # These values should be very similar
     # print(brain.timer.value(), r.delta_x_from_encoders, r.delta_y_from_encoders, r.delta_x_from_gps_robots_reference_frame, r.delta_y_from_gps_robots_reference_frame)
@@ -3482,34 +3565,24 @@ competition = Competition(driver_control, r.run_autonomous)
 # ! PRIORITY
 # TODO: Figure out why the robot's encoders are reading a greater value than they actually are
 
-# TODO: 
+# TODO: apply fiter for encoders values so theyre cleaner
+# TODO: Implement fast autonomous
 
 # TODO: Make all pid controllers be based on delta time
 # TODO: Make loop sleep time 0 AND then retune EVERYTHING
 
-# TODO: Make flywheel integral term be better (maybe make it higher when we are winding up???)
-# TODO: Do std evaluation on output from flywheels
-
 # TODO: Use accel/encoders to figure out when the robot is stopped?!?!?
-# TODO: Create some sort of timeout
-# TODO: Make thingy that detects when robot stops and if that happens then continue the autonomous mode.
+
 # TODO: For competition, be sure to turn on HOLD mode
-# TODO: Make autonomous mode follow the same velocity vector as during the recording???
 
 # TODO: Add a "neutral" team color, also make sure that the auto orientate towards high goal worksi n a regular match
-# TODO: Clean up the code for auto-orientate
+
 # TODO: For the aimbot, make it so that if we are on a specific team, the robot won't accidentally try to shoot at it
-# TODO: Test to see if the aimbot gets tricked if there are different colors in the background (like a blue or something)
 
 # TODO: Test removing the derivative term from the flywheel
-# TODO: Make driving not care about turning speed (so turning speed takes precedence)
-# TODO: Find position of gps in relation to center of robot
-# TODO: Make it so that the robot movement is based off of the gps for now AND THEN add it using the encoders (kinda backwards, ik)
-
-# TODO: Theoretically, shouldn't max acceleration half if we're close to 0 for the motor speed? rework that function
-# TODO: Make a better pose/orienation initialization/resetting tool (initialize the position in the init() command, don't worry if we can't init yet)
 
 # TODO: When the robot initializes, make it rotate towards 90 or 180 degrees exactly (if GPS is on)
+
 # TODO: Use sensor fusion with Kalman filter for better position
 # TODO: Make odometry consistent with real world measurements
 
@@ -3518,8 +3591,6 @@ competition = Competition(driver_control, r.run_autonomous)
 
 # * IMPORTANT
 # TODO: Pid controller for motor movement?!?!?!?!?!?!?!?
-# TODO: Figure out variance in GPS sensor data and variance in model (Q and R)
-# TODO: make the offset of the gps so that it reports the position of the center of the robot
 # TODO: When the robot has an x,y position close to the edge of the field, make it so that the robot physically cannot slam into the wall (or use sensors)
 # TODO: Change this to be relative to the match time???
 
