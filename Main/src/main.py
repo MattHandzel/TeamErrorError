@@ -1360,7 +1360,7 @@ class Robot:
         if self.slow_mode:
             target_x_vel = target_x_vel / 4
             target_y_vel = target_y_vel / 4
-            target_theta_vel = target_theta_vel / 4
+            target_theta_vel = target_theta_vel / 3
         
         if max_velocity - abs(target_theta_vel) < abs(target_x_vel) + abs(target_y_vel) and self.running_autonomous:
             # print("previous X, y, theta", target_x_vel, target_y_vel, target_theta_vel)
@@ -1667,48 +1667,53 @@ class Robot:
             if "slow_down_distance" not in step:
                 step["slow_down_distance"] = self.compute_slow_down_distance_for_min_velocity(step["min_velocity"])
 
-        # Run the autonomous procedure
-        for step in self.autonomous_procedure:
-            target_state = {}
-            self["override_velocity_x"] = None
-            self["override_velocity_y"] = None
-            self["override_velocity_theta"] = None
+        try:
 
-            if "timeout" in step.keys():
-                timeout_timer.reset()
-                timeout_time = step["timeout"]
-            else:
-                timeout_time = 999
+            # Run the autonomous procedure
+            for step in self.autonomous_procedure:
+                target_state = {}
+                self["override_velocity_x"] = None
+                self["override_velocity_y"] = None
+                self["override_velocity_theta"] = None
 
-            if "set_x" in step:
-                self.x_pos = step["set_x"]
-            if "set_y" in step:
-                self.y_pos = step["set_y"]
-            if "set_theta" in step:
-                self.total_theta = step["set_theta"]
-            
-            for key in step.keys():
-                if key in self.state.keys():
-                    target_state[key] = step[key]
+                if "timeout" in step.keys():
+                    timeout_timer.reset()
+                    timeout_time = step["timeout"]
+                else:
+                    timeout_time = 999
 
-            if "message" in step.keys():
-                self.print(step["message"])
+                if "set_x" in step:
+                    self.x_pos = step["set_x"]
+                if "set_y" in step:
+                    self.y_pos = step["set_y"]
+                if "set_theta" in step:
+                    self.total_theta = step["set_theta"]
+                
+                for key in step.keys():
+                    if key in self.state.keys():
+                        target_state[key] = step[key]
 
-            if "funcs" in step.keys():
-                for func in step["funcs"]:
-                    func()
+                if "message" in step.keys():
+                    self.print(step["message"])
 
-            self.set_target_state(target_state)
+                if "funcs" in step.keys():
+                    for func in step["funcs"]:
+                        func()
 
-            if "wait" in step.keys():
-                print("Waiting for", step["wait"], "seconds")
-                wait(step["wait"], SECONDS)
+                self.set_target_state(target_state)
 
-            # While we haven't reached the target state then just wait
-            while (not self.target_reached) and (timeout_timer.value() < timeout_time):
-                # print("WE ARE WAITING...", self.target_state["x_pos"], self.x_pos, self.target_state["y_pos"], self.y_pos, self.target_state["theta"], self.total_theta, self["override_velocity_x"])
-                wait(0.05, SECONDS)
-        
+                if "wait" in step.keys():
+                    print("Waiting for", step["wait"], "seconds")
+                    wait(step["wait"], SECONDS)
+
+                # While we haven't reached the target state then just wait
+                while (not self.target_reached) and (timeout_timer.value() < timeout_time):
+                    # print("WE ARE WAITING...", self.target_state["x_pos"], self.x_pos, self.target_state["y_pos"], self.y_pos, self.target_state["theta"], self.total_theta, self["override_velocity_x"])
+                    wait(0.05, SECONDS)
+        except Exception as e:
+            # show that there was an exception and draw something on the screen
+            brain.screen.draw_rectangle(0,0,100,100, Color.PURPLE)
+            print("\n\nThere was an exception in the auto!\n\n", e)
         print("DONE WITH AUTONOMOUS")
 
         # After the autonomous mode is over then set the target state to the robot's initial state (so we don't move and turn everything off)
@@ -2150,6 +2155,12 @@ def driver_control():
             "buttonA" : controller_2.buttonA.pressing(),
             "buttonB" : controller_2.buttonB.pressing(),
         }
+    
+    left_motor_a.set_stopping(HOLD)
+    left_motor_b.set_stopping(HOLD)
+    right_motor_a.set_stopping(HOLD)
+    right_motor_b.set_stopping(HOLD)
+    
     #endregion
 
     previous_flywheel_speed = 0
@@ -2222,7 +2233,7 @@ def driver_control():
           180 : controller_1.buttonB.pressing(),
         }
 
-        auto_orientate_total_button_pressed_count = int(controller_1.buttonX.pressing()) + int(controller_1.buttonY.pressing()) + int(controller_1.buttonA.pressing()) + int(controller_1.buttonB.pressing())  + int(controller_2.buttonA.pressing()) + int(controller_2.buttonB.pressing()) + int(controller_2.buttonY.pressing()) + int(controller_2.buttonX.pressing())
+        auto_orientate_total_button_pressed_count = int(controller_1.buttonX.pressing()) + int(controller_1.buttonY.pressing()) + int(controller_1.buttonA.pressing()) + int(controller_1.buttonB.pressing())
         auto_orientate_target_theta = None
         
         if auto_orientate_total_button_pressed_count > 0:
@@ -2235,7 +2246,6 @@ def driver_control():
 
         if controller_1.buttonB.pressing():
             auto_orientate_target_theta = -135
-
         
         if auto_orientate_target_theta != None:
             new_theta = None
@@ -2445,40 +2455,6 @@ shoot_discs_auto_program = [
     },
 ]
 
-match_auto_three_squares = [
-    {
-        # Set the target x, y, and theta positions to None
-        "x_pos" : None,
-        "y_pos" : None,
-        "theta" : None,
-        "auto_intake" : False,
-        "auto_roller" : True,
-        "drone_mode" : True,
-        "override_velocity_theta" : None,
-        "override_velocity_y" : -40,
-        "message" : "Doing rollers...",
-        "wait" : 0.5,
-        "flywheel_speed" : 36,
-    },
-    {
-        "roller_spin_for" : -0.35,
-    },
-    {
-        "override_velocity_y" : 10,
-        "wait" : 1,
-    },
-    {   
-        "theta" : 95, 
-        "override_velocity_y" : 0,
-        "override_velocity_x" : 0,
-        "wait" : 2,
-        "flywheel_speed" : 30,
-    },
-    {
-        "shoot_disc" : 3,
-    },
-]
-
 match_auto_two_squares = [
     {
         "override_velocity_theta": None,
@@ -2488,8 +2464,8 @@ match_auto_two_squares = [
         "set_x": 0,
         "set_y": 0,
         "set_theta": 0,
-        "autonomous_speed" : 60,
-        "flywheel_speed": 66.5,
+        "autonomous_speed" : 65,
+        "flywheel_speed": 66,
         "intake_speed": 100,
     },
     {
@@ -2499,7 +2475,7 @@ match_auto_two_squares = [
         "intake_speed": 0,
         "x_pos" : 54,
         "y_pos" : 0,
-        "min_velocity" : 20,
+        "min_velocity" : 30,
     },
     {
         "launch_expansion": False,
@@ -2511,7 +2487,6 @@ match_auto_two_squares = [
         "timeout" : 2,
     },
     {
-        "theta" : 2,
         "roller_spin_for" : 0.35,
         "timeout" : 2,
     },
@@ -2534,7 +2509,7 @@ match_auto_two_squares = [
     },
     {
         "shoot_disc" : 1,
-        "wait" : 1.5,
+        "wait" : 1.75,
     },
     
     {
@@ -2578,14 +2553,55 @@ match_auto_two_squares = [
         "theta" : 41,
     },
     {
-        "shoot_disc" : 1,
-        "wait" : 1,
+        "wait" : 0.5,
     },
     {
         "shoot_disc" : 1,
-        "wait" : 1,
-    }
+        "wait" : 1.75,
+    },
+    {
+        "shoot_disc" : 1,
+    },
+    {
+        "message" : "DONE WITH AUTONOMOUS"
+    },
 ]
+
+match_auto_three_squares = [
+    {
+        # Set the target x, y, and theta positions to None
+        "x_pos" : None,
+        "y_pos" : None,
+        "theta" : None,
+        "auto_intake" : False,
+        "auto_roller" : True,
+        "drone_mode" : True,
+        "override_velocity_theta" : None,
+        "override_velocity_y" : -40,
+        "message" : "Doing rollers...",
+        "wait" : 0.5,
+        "flywheel_speed" : 36,
+    },
+    {
+        "roller_spin_for" : -0.35,
+    },
+    {
+        "override_velocity_y" : 10,
+        "wait" : 1,
+    },
+    {   
+        "theta" : 95, 
+        "override_velocity_y" : 0,
+        "override_velocity_x" : 0,
+        "wait" : 2,
+        "flywheel_speed" : 30,
+    },
+    {
+        "shoot_disc" : 3,
+    },
+]
+
+match_auto_three_squares = match_auto_two_squares
 
 auto_intake_on_forever = [
     {
@@ -2874,7 +2890,7 @@ auto_intake_on_forever = [
 #         "wait" : 1,
 #     }
 # ]
-auto_test_odometry = [
+skills_auto = [
     {
         "override_velocity_theta": None,
         "drone_mode": True,
@@ -2932,10 +2948,11 @@ auto_test_odometry = [
     },
     {
         "intake_speed": 0,
-        "x_pos": -70.5,
+        "x_pos": -71,
         "y_pos": 5,
         "min_velocity" : 0,
         "flywheel_speed": 53,
+        "timeout" : 3,
     },
     {
         "theta" : 91,
@@ -3143,6 +3160,7 @@ auto_test_odometry = [
     {
         "x_pos": 215,
         "y_pos": 263 + 12.0000009191919191911191919,
+        "theta" : 188,
     },
     ### Shoot 3 final discs
     {
@@ -3155,7 +3173,7 @@ auto_test_odometry = [
     },
     {
         "shoot_disc" : 1,
-        "wait" : 1,
+        "wait" : 1,3
     },
     {
         "launch_expansion": False,
@@ -3244,7 +3262,7 @@ wait(30, MSEC)
 init()
 r.init()
 
-r.set_autonomous_procedure(match_auto_two_squares)
+r.set_autonomous_procedure(skills_auto)
 
 #region GUI
 
@@ -3276,7 +3294,7 @@ gui.add_page([
     Button("Go To Debug", 360, 200, 120, 40, (0xAAAAAA), lambda: gui.set_page(1)),
 
     # Auto Selector
-    Switch(["3-Square", "2-Square", "SKILLS", "ShootDiscs", "Intake Forever", "Temp", "Test"], 0, 120, 120, 40, [0x33FF33, 0x33CC33, 0x33AA33, 0x339933, 0x337733, 0x335533,0x333333], lambda auto_mode: r.set_autonomous_procedure(auto_mode), [match_auto_three_squares, match_auto_two_squares, auto_test_odometry, auto_test_odometry, auto_intake_on_forever, auto_test_odometry, auto_test]),
+    Switch(["3-Square", "2-Square", "SKILLS", "ShootDiscs", "Intake Forever", "Temp", "Test"], 0, 120, 120, 40, [0x33FF33, 0x33CC33, 0x33AA33, 0x339933, 0x337733, 0x335533,0x333333], lambda auto_mode: r.set_autonomous_procedure(auto_mode), [match_auto_three_squares, match_auto_two_squares, skills_auto, skills_auto, auto_intake_on_forever, skills_auto, auto_test]),
     Button("Run auto", 0, 160, 120, 40, (0xAAAAAA), lambda: r.run_autonomous()),
     Switch(["2-Controller", "1-Controller"], 240, 160, 120, 80, [0xCCAAAA, 0xCCAACC], lambda value: set_debug_value(value), (False, True))
 ])
