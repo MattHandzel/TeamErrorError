@@ -1233,7 +1233,7 @@ class Robot:
         # if ((abs(self.state["x_pos"] - self.target_state["x_pos"]) < self.position_tolerance and abs(self.state["y_pos"] - self.target_state["y_pos"]) < self.position_tolerance)         #     or (self.state["override_velocity_y"] != None or self.state["override_velocity_x"] != None)):
         
         tolerance = self["tolerance"]
-        target_state_theta_tolerance = 2
+        target_state_theta_tolerance = 1.8
 
         # if self.shoot_disc <= 0 and self["roller_and_intake_motor_1_done"] aznd self["roller_and_intake_motor_2_done"] and ((abs(self["x_pos"] - self.target_state["x_pos"]) < target_state_position_tolerance and abs(self["y_pos"] - self.target_state["y_pos"]) < target_state_position_tolerance and abs(self["theta"] - self.target_state["theta"]) < target_state_theta_tolerance) or (False)):
         # distance_to_target_point = sqrt((self["x_pos"] - self.target_state["x_pos"]) ** 2 + (self["y_pos"] - self.target_state["y_pos"]) ** 2)
@@ -1644,7 +1644,7 @@ class Robot:
         self["override_velocity_x"] = None
         self["override_velocity_y"] = None
         self["override_velocity_theta"] = None
-
+        print(type(self.autonomous_procedure))
         # Modify the states
         for step in self.autonomous_procedure:
             if "position_type" in step:
@@ -2224,7 +2224,6 @@ def driver_control():
             reset_robot_theta()
 
         #endregion
-        
         #region Auto orient feature
         auto_orientate_dictionary = {
           0 : controller_1.buttonX.pressing(),
@@ -2465,7 +2464,7 @@ match_auto_two_squares = [
         "set_y": 0,
         "set_theta": 0,
         "autonomous_speed" : 65,
-        "flywheel_speed": 66,
+        "flywheel_speed": 65,
         "intake_speed": 100,
     },
     {
@@ -2483,8 +2482,8 @@ match_auto_two_squares = [
         "intake_speed": 0,
         "message": "This is state #2!",
         "x_pos" : 54,
-        "y_pos" : -7  - 13.00,
-        "timeout" : 2,
+        "y_pos" : -7  - 12.25,
+        "timeout" : 1.75,
     },
     {
         "roller_spin_for" : 0.35,
@@ -2498,18 +2497,20 @@ match_auto_two_squares = [
         "y_pos": 21  - 13.00,
     },
     {
-        "theta": 15,
+        "autonomous_speed" : 70,
+        "theta": 13,
         "intake_speed": 0,
         "message": "This is state #4!",
         "x_pos": 54,
-        "y_pos": 21  - 13.00,
+        "y_pos": 21  - 13.00 - 0.5,
     },
     {
-        'wait' : 0.5,
+        "autonomous_speed" : 65,
+        'wait' : 0.75,
     },
     {
         "shoot_disc" : 1,
-        "wait" : 1.75,
+        "wait" : 2,
     },
     
     {
@@ -2529,7 +2530,7 @@ match_auto_two_squares = [
         "launch_expansion": False,
         "theta": 0,
         "intake_speed": 0,
-        "flywheel_speed" : 65,
+        "flywheel_speed" : 61.4,
         "message": "This is state #3!",
         "x_pos": 18,
         "y_pos": 27  - 13.00,
@@ -2546,11 +2547,11 @@ match_auto_two_squares = [
         "launch_expansion": False,
         "intake_speed": 100,
         "message": "This is state #5!",
-        "x_pos": -11 + -70.0 + 40.00,
-        "y_pos": 11 + 120  - 15.00 - 40.00,
+        "x_pos": -11 + -70.0 + 43.00,
+        "y_pos": 11 + 120  - 15.00 - 43.00,
     },
     {
-        "theta" : 41,
+        "theta" : 35,
     },
     {
         "wait" : 0.5,
@@ -2564,7 +2565,11 @@ match_auto_two_squares = [
     },
     {
         "message" : "DONE WITH AUTONOMOUS"
-    },
+    }
+]
+
+match_auto_rollers_only_easy = [
+
 ]
 
 match_auto_three_squares = [
@@ -2908,8 +2913,8 @@ skills_auto = [
         "message": "Move towards the rollers",
         "flywheel_speed": 0,
         "x_pos": -11,
-        "y_pos": -11.5,
-        "timeout" : 5,
+        "y_pos": -10,
+        "timeout" : 3,
     },
     {
         "roller_spin_for" : 0.6,
@@ -2927,6 +2932,7 @@ skills_auto = [
         "message": "Rotating the robot!",
         "flywheel_speed": 0,
         "min_velocity" : 0,
+
     },
     {
         "launch_expansion": False,
@@ -2948,14 +2954,15 @@ skills_auto = [
     },
     {
         "intake_speed": 0,
-        "x_pos": -71,
-        "y_pos": 5,
+        "x_pos": -72.5,
+        "y_pos": 5 + 4.01231456556765674560009 - 1.5,
         "min_velocity" : 0,
         "flywheel_speed": 53,
         "timeout" : 3,
     },
     {
-        "theta" : 91,
+        "theta" : 90,
+        "timeout" : 2,
     },
     {
         "roller_spin_for" : 0.62,
@@ -2963,7 +2970,7 @@ skills_auto = [
         "wait" : 0.7,
     },
     {
-        "theta" : 90,
+        "theta" : 88,
     },
     {
         "launch_expansion": False,
@@ -2971,12 +2978,12 @@ skills_auto = [
         "intake_speed": 0,
         "message": "This is state #3!",
         "x_pos": 100,
-        "y_pos": 15,
+        "y_pos": 15 + 4.01231456556765674560009,
         "min_velocity" : 0,
     },
     {
         "intake_speed" : 100,
-        "theta" : 106,
+        "theta" : 105,
 
     },
     {
@@ -3001,7 +3008,7 @@ skills_auto = [
         "message": "This is state #1!",
         "flywheel_speed": 0,
         "x_pos": 100,
-        "y_pos": 15,
+        "y_pos": 15 + 4.01231456556765674560009,
     },
     {
         "launch_expansion": False,
@@ -3009,11 +3016,12 @@ skills_auto = [
         "message": "This is state #2!",
         "flywheel_speed": 0,
         "x_pos": 78,
-        "y_pos": 82,
+        "y_pos": 82 + 4.01231456556765674560009,
         "min_velocity" : 65,
     },
     {
         "theta": 225.0,
+        "shoot_disc" : 1,
     },
     {
         "autonomous_speed" : 60,
@@ -3023,7 +3031,7 @@ skills_auto = [
         "message": "This is state #4!",
         "flywheel_speed": 0,
         "x_pos": 161,
-        "y_pos": 168 + 4.00000, 
+        "y_pos": 173 + 4.00000 + 3.754567355,
     },
     {
         "autonomous_speed" : 75,
@@ -3036,23 +3044,23 @@ skills_auto = [
         "intake_speed": 0,
         "message": "This is state #2!",
         "flywheel_speed": 53,
-        "x_pos": 212,
-        "y_pos": 166 + 4.00000,
+        "x_pos": 213,
+        "y_pos": 173 + 4.00000,
     },
     {
         "launch_expansion": False,
         "theta": 180,
         "intake_speed": 0,
         "message": "This is state #3!",
-        "x_pos": 212,
-        "y_pos": 166 + 4.00000,
+        "x_pos": 213,
+        "y_pos": 173 + 4.00000,
     },
     {
         "launch_expansion": False,
         "theta": 180,
         "intake_speed": 0,
         "message": "This is state #4!",
-        "x_pos": 212,
+        "x_pos": 213,
         "y_pos": 130,
         "min_velocity" : 0,
     },
@@ -3072,6 +3080,9 @@ skills_auto = [
         "wait" : 1,
     },
     {
+        "shoot_disc" : 1,
+    },
+    {
         "launch_expansion": False,
         "theta": 270,
         "intake_speed": 0,
@@ -3084,18 +3095,20 @@ skills_auto = [
         "intake_speed": 0,
         "message": "This is state #1!",
         "flywheel_speed": 0,
-        "x_pos": 212,
-        "y_pos": 220 + 10.0000123123,
+        "x_pos": 213,
+        "y_pos": 220 + 13.0000123123,
+        "shoot_disc" : 1,
     },
 
     {
+        "shoot_disc" : 1,
         "launch_expansion": False,
         "theta": 270,
         "intake_speed": 0,
         "message": "This is state #2!",
         "flywheel_speed": 0,
         "x_pos": 251,
-        "y_pos": 217 + 10.0000123123,
+        "y_pos": 217 + 13.0000123123 + 3,
         "min_velocity" : 0,
         "timeout" : 5,
     },
@@ -3105,8 +3118,8 @@ skills_auto = [
         "wait" : 0.1,
     },
     {
-        "x_pos": 212,
-        "y_pos": 217 + 10.0000123123,
+        "x_pos": 225,
+        "y_pos": 217 + 13.0000123123 + 1,
         "min_velocity" : 0,
     },
     {
@@ -3118,9 +3131,9 @@ skills_auto = [
         "launch_expansion": False,
         "theta": 90,
         "message": "This is state #3!",
-        "flywheel_speed": 66,
+        "flywheel_speed": 65.6,
         "x_pos": 176,
-        "y_pos": 217 + 10.0000123123,
+        "y_pos": 217 + 13.0000123123,
     },
 
     {
@@ -3130,7 +3143,7 @@ skills_auto = [
         "intake_speed": 100,
         "message": "This is state #4!",
         "x_pos": 176,
-        "y_pos": 217 + 10.0000123123,
+        "y_pos": 217 + 13.0000123123,
     },
 
 
@@ -3160,7 +3173,12 @@ skills_auto = [
     {
         "x_pos": 215,
         "y_pos": 263 + 12.0000009191919191911191919,
-        "theta" : 188,
+        "theta" : 180,
+    },
+    {
+        "x_pos": 215,
+        "y_pos": 263 + 12.0000009191919191911191919,
+        "theta" : 185,
     },
     ### Shoot 3 final discs
     {
@@ -3173,7 +3191,10 @@ skills_auto = [
     },
     {
         "shoot_disc" : 1,
-        "wait" : 1,3
+        "wait" : 1,
+    },
+    {
+        "shoot_disc" : 1,
     },
     {
         "launch_expansion": False,
@@ -3262,7 +3283,7 @@ wait(30, MSEC)
 init()
 r.init()
 
-r.set_autonomous_procedure(skills_auto)
+r.set_autonomous_procedure(match_auto_two_squares)
 
 #region GUI
 
@@ -3422,3 +3443,8 @@ competition = Competition(driver_control, r.run_autonomous)
 # TODO: make an auto path class that has information like description, color, etc, maybe draw it out???.
 
 #endregion
+
+
+# Things to talk about with judges
+# physics simulator
+# 
