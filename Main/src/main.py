@@ -388,6 +388,8 @@ def init():
     # These wheels are reversed so that they spin ccw instead of cw for forward
     right_motor_b.spin(REVERSE)
 
+    turret_motor.set_stopping(HOLD)
+
     # Set the optical light power
     # roller_optical.set_light_power(100)
     # roller_optical.object_detect_threshold(0)
@@ -882,6 +884,14 @@ class Robot:
     x_from_gps = 0
     y_from_gps = 0
 
+    # variance of gps, we got this number through experimentation (sted ^ 2)
+    gps_variance = 8
+
+    x_position_variance = 8
+    y_position_variance = 8
+
+    predicted_position = 0
+
     #endregion
 
     #region Flywheel Variables    
@@ -952,7 +962,7 @@ class Robot:
         1000 : 50,
     }
 
-    turret_theta_range = 15
+    turret_theta_range = 40
 
     #endregion
     
@@ -1050,7 +1060,7 @@ class Robot:
 
         "auto_aim" : False,
         "auto_orientate" : False,
-        "turret_angle" : 0,
+        "turret_theta" : 0,
     }
 
     target_state = {
@@ -1321,22 +1331,6 @@ class Robot:
         # if self.shoot_disc <= 0 and self["roller_and_intake_motor_1_done"] aznd self["roller_and_intake_motor_2_done"] and ((abs(self["x_pos"] - self.target_state["x_pos"]) < target_state_position_tolerance and abs(self["y_pos"] - self.target_state["y_pos"]) < target_state_position_tolerance and abs(self["theta"] - self.target_state["theta"]) < target_state_theta_tolerance) or (False)):
         # distance_to_target_point = sqrt((self["x_pos"] - self.target_state["x_pos"]) ** 2 + (self["y_pos"] - self.target_state["y_pos"]) ** 2)
         # if self.shoot_disc <= 0 and self["roller_and_intake_motor_1_done"] and self["roller_and_intake_motor_2_done"] and distance_to_target_point < target_state_position_tolerance and abs(self["theta"] - self.target_state["theta"]) < target_state_theta_tolerance:
-        
-        # Using the check_if_intersect function, see if the robot passes the line segment that makes up the target position
-        line1 = [self.previous_state["x_pos"], self.previous_state["y_pos"], self.state["x_pos"], (self.state["y_pos"] )]
-        line1b = [self.previous_state["x_pos"], self.previous_state["y_pos"], 2 * (self.state["x_pos"] - self.previous_state["x_pos"]), 2 * (self.state["y_pos"] - self.previous_state["y_pos"])]
-        line1c = [self.previous_state["x_pos"] - 0.2 * cos(self.theta * DEG_TO_RAD), self.previous_state["y_pos"] - 0.2, 2 * (self.state["x_pos"] - self.previous_state["x_pos"]) + 0.2, 2 * (self.state["y_pos"] - self.previous_state["y_pos"]) + 0.2]
-        line1d = [self.previous_state["x_pos"] + 0.2, self.previous_state["y_pos"] - 0.2, 2 * self.state["x_pos"] - self.previous_state["x_pos"] - 0.2, 2 * self.state["y_pos"] - self.previous_state["y_pos"] + 0.2]
-
-        line2 = [self.target_state["x_pos"] - cos(self.theta * DEG_TO_RAD) * tolerance, self.target_state["y_pos"] - sin(self.theta * DEG_TO_RAD) * tolerance, self.target_state["x_pos"] + cos(self.theta * DEG_TO_RAD) * tolerance, self.target_state["y_pos"] + sin(self.theta * DEG_TO_RAD) * tolerance]
-        is_intersecting = check_intersection(line1, line2) or check_intersection(line1b, line2) or check_intersection(line1d, line2) or check_intersection(line1c, line2) 
-        is_close_enough = sqrt((self.x_pos - self.target_state["x_pos"]) ** 2 + (self.y_pos - self.target_state["y_pos"]) ** 2) < self.compute_tolerance_for_min_velocity(self["min_velocity"])
-        rollers_done = self["roller_and_intake_motor_1_done"] and self["roller_and_intake_motor_2_done"]
-        # passed_target_rotation = (self.previous_state["theta"] < self.target_state["theta"] and self.theta > self.target_state["theta"]) or (self.previous_state["theta"] > self.target_state["theta"] and self.theta < self.target_state["theta"])
-        passed_target_rotation = False
-
-        if (is_intersecting or is_close_enough) and (abs(self.theta - self.target_state["theta"]) < target_state_theta_tolerance or passed_target_rotation) and rollers_done and self.shoot_disc <= 0:
-            self.target_reached = True
 
         # Get the torque on the flywheel
         self["flywheel_torque"] = flywheel_motor.torque()
@@ -1356,6 +1350,9 @@ class Robot:
         if self["roller_and_intake_motor_1_done"] and self["roller_and_intake_motor_2_done"] and not self.previous_state["roller_and_intake_motor_1_done"] and not self.previous_state["roller_and_intake_motor_2_done"]:
             self["roller_spin_for"] = 0
         
+        # Turret 
+        self["turret_theta"] = self.compute_turret_ticks_to_angle(turret_motor.position())
+
         # Calculate the target goal if we're on the neutral team, the goal thats the closest
         goals = []
 
@@ -1385,6 +1382,22 @@ class Robot:
         if not self.turret_initialized and turret_limit_switch.value() == 0:
             turret_motor.set_position(self.turret_initial_position, DEGREES)
             self.turret_initialized = True
+        
+        # Using the check_if_intersect function, see if the robot passes the line segment that makes up the target position
+        line1 = [self.previous_state["x_pos"], self.previous_state["y_pos"], self.state["x_pos"], (self.state["y_pos"] )]
+        line1b = [self.previous_state["x_pos"], self.previous_state["y_pos"], 2 * (self.state["x_pos"] - self.previous_state["x_pos"]), 2 * (self.state["y_pos"] - self.previous_state["y_pos"])]
+        line1c = [self.previous_state["x_pos"] - 0.2 * cos(self.theta * DEG_TO_RAD), self.previous_state["y_pos"] - 0.2, 2 * (self.state["x_pos"] - self.previous_state["x_pos"]) + 0.2, 2 * (self.state["y_pos"] - self.previous_state["y_pos"]) + 0.2]
+        line1d = [self.previous_state["x_pos"] + 0.2, self.previous_state["y_pos"] - 0.2, 2 * self.state["x_pos"] - self.previous_state["x_pos"] - 0.2, 2 * self.state["y_pos"] - self.previous_state["y_pos"] + 0.2]
+
+        line2 = [self.target_state["x_pos"] - cos(self.theta * DEG_TO_RAD) * tolerance, self.target_state["y_pos"] - sin(self.theta * DEG_TO_RAD) * tolerance, self.target_state["x_pos"] + cos(self.theta * DEG_TO_RAD) * tolerance, self.target_state["y_pos"] + sin(self.theta * DEG_TO_RAD) * tolerance]
+        is_intersecting = check_intersection(line1, line2) or check_intersection(line1b, line2) or check_intersection(line1d, line2) or check_intersection(line1c, line2) 
+        is_close_enough = sqrt((self.x_pos - self.target_state["x_pos"]) ** 2 + (self.y_pos - self.target_state["y_pos"]) ** 2) < self.compute_tolerance_for_min_velocity(self["min_velocity"])
+        rollers_done = self["roller_and_intake_motor_1_done"] and self["roller_and_intake_motor_2_done"]
+        # passed_target_rotation = (self.previous_state["theta"] < self.target_state["theta"] and self.theta > self.target_state["theta"]) or (self.previous_state["theta"] > self.target_state["theta"] and self.theta < self.target_state["theta"])
+        passed_target_rotation = False
+
+        if (is_intersecting or is_close_enough) and (abs(self.theta - self.target_state["theta"]) < target_state_theta_tolerance or passed_target_rotation) and rollers_done and self.shoot_disc <= 0 and (turret_motor.is_done() or abs(self["turret_theta"] - self.target_state["turret_theta"]) < 0.5):
+            self.target_reached = True
 
     def position_update(self):
         '''
@@ -1446,7 +1459,7 @@ class Robot:
         target_x_vel = clamp(target_x_vel, max_velocity, -max_velocity) * (self.autonomous_speed / 100 if self.running_autonomous else 1)
         target_y_vel = clamp(target_y_vel, max_velocity, -max_velocity) * (self.autonomous_speed / 100 if self.running_autonomous else 1)
 
-        target_theta_vel = ((clamp(delta_theta, orientation_tolerance, -orientation_tolerance) * max_velocity / (orientation_tolerance - 2.25)) ** 2) / max_velocity * sign(delta_theta) * (1 if self.running_autonomous else (0.5 if programming_chassis else 1))
+        target_theta_vel = ((clamp(delta_theta, orientation_tolerance, -orientation_tolerance) * max_velocity / (orientation_tolerance - 2.25)) ** 2) / max_velocity * sign(delta_theta) * (1 if self.running_autonomous else (0.1 if programming_chassis else 1))
         
         target_theta_vel = clamp(target_theta_vel, max_velocity, -max_velocity)
 
@@ -1595,27 +1608,29 @@ class Robot:
         if self["auto_orientate"]:            
             pass
 
-        if True: # self["auto_aim"]:
-            target_angle = get_angle_to_object((r.x_pos, r.y_pos), (self.target_goal.x_pos, self.target_goal.y_pos)) - r.initial_theta_field + self.flywheel_angle_offset
-            # Set the robot's angle to the target angle, while making the turret try to compensate for the angle
-            self.target_state["theta"] = target_angle 
+        # if True: # self["auto_aim"]:
+        #     target_angle = get_angle_to_object((r.x_pos, r.y_pos), (self.target_goal.x_pos, self.target_goal.y_pos)) - r.initial_theta_field + self.flywheel_angle_offset
+        #     # Set the robot's angle to the target angle, while making the turret try to compensate for the angle
+        #     self.target_state["theta"] = target_angle 
 
     def turret_update(self):
         
-        turret_motor.spin(FORWARD, turret_theta_vel, PERCENT)
+        # turret_motor.spin(FORWARD, turret_theta_vel, PERCENT)
+        # return
         
-        return
-        if not self.turret_initialized:
-            turret_motor.spin(FORWARD, 10, PERCENT)
+        # if not self.turret_initialized:
+        #     turret_motor.spin(FORWARD, 10, PERCENT)
+        #     return
 
-        target_angle = closest_angle(self.target_state["theta"] - self["theta"])
-
+        turret_theta = closest_angle(self.target_state["turret_theta"])
         # Move the turret to the target orientation
-        if abs(target_angle) > self.turret_theta_range:
-            target_angle = self.turret_theta_range * sign(self["turret_angle"])
- 
-        turret_motor.set_position(self.compute_angle_to_turret_ticks(target_angle), RotationUnits.DEG)
-
+        if self["auto_aim"]:
+            turret_theta = closest_angle(self.target_state["theta"] - self["theta"])
+            
+        if abs(turret_theta) > self.turret_theta_range / 2:
+            turret_theta = self.turret_theta_range / 2 * sign(turret_theta)
+        
+        turret_motor.spin_to_position(self.compute_angle_to_turret_ticks(turret_theta), RotationUnits.DEG, 60, PERCENT)
 
     def intake_update(self):
         # If we have auto_intake enbaled then use the camera and try to look for the disc signatures
@@ -1800,6 +1815,10 @@ class Robot:
             
             if "slow_down_distance" not in step:
                 step["slow_down_distance"] = self.compute_slow_down_distance_for_min_velocity(step["min_velocity"])
+            
+            if "shoot_at_theta" in step:
+                step["theta"] = step["shoot_at_theta"] - sign(step["shoot_at_theta"]) * (self.turret_theta_range / 2) * 1
+                step["turret_theta"] = step["shoot_at_theta"] - step["theta"]
 
         try:
 
@@ -1915,6 +1934,11 @@ class Robot:
         # 1200 ticks per rotation of the gear, so 1200 / 360 is the ticks per degree
         turret_gear_ratio = 84 / 36
         return angle * turret_gear_ratio
+
+    def compute_turret_ticks_to_angle(self, turret_ticks):
+        turret_gear_ratio = 84 / 36
+        return turret_ticks / turret_gear_ratio
+        
 
     #region Properties getters and setters (dunders included)
     
@@ -2338,9 +2362,9 @@ def driver_control():
         #endregion
         
         #region Drive robot variables
-        new_theta = -((controller_1.axis1.position())) ** 2 * sign(controller_1.axis1.position()) / 100 * (0.7 if recording_autonomous else 1)
+        new_theta = ((controller_1.axis1.position())) ** 2 * sign(controller_1.axis1.position()) / 100 * (0.7 if recording_autonomous else 1)
+        new_theta *= (-1 if programming_chassis else 1)
         global turret_theta_vel
-        turret_theta_vel = controller_1.axis2.position() ** 2 *sign(controller_1.axis2.position()) / 100
 
         new_x = ((controller_1.axis4.position())) ** 2 * sign(controller_1.axis4.position()) / 100 * (0.25 if recording_autonomous else 1)
         new_y = ((controller_1.axis3.position())) ** 2 * sign(controller_1.axis3.position()) / 100 * (0.25 if recording_autonomous else 1)
@@ -2357,6 +2381,10 @@ def driver_control():
             new_y = new_y / (new_x + new_y) * 100
 
         new_intake = clamp(controller_2.buttonL1.pressing() * 100 - controller_2.buttonR1.pressing() * 100 + controller_1.buttonLeft.pressing() * 100, 100, -100)
+        
+        # turret_theta = r.target_state["turret_theta"] + controller_1.axis2.position() * 0.005
+        turret_theta = closest_angle(-r["theta"])
+
         #endregion
         
         #region Record autonomous
@@ -2427,7 +2455,7 @@ def driver_control():
             
             # If the robot is closer to one goal or the other 
             goal = r.red_goal if r.x_from_gps + r.y_from_gps > 0 else r.blue_goal
-            angle = closest_angle(get_angle_to_object((r.x_from_gps, r.y_from_gps), (r.target_goal.x_pos, r.target_goal.y_pos)) - r.initial_theta_field)
+            angle = closest_angle(get_angle_to_object((r.x_from_gps, r.y_from_gps), (r.target_goal.x_pos, r.target_goal.y_pos)) - r.initial_theta_field)s
             
             print("going to angle", angle)
             r.set_target_state(
@@ -2494,6 +2522,7 @@ def driver_control():
                 "override_velocity_theta" : new_theta,
                 "slow_mode" : controller_1.buttonL1.pressing(),
                 "intake_speed" : new_intake,
+                "turret_theta" : turret_theta,
             }
         )
         #endregion
@@ -3427,6 +3456,50 @@ auto_test = [
 
 ]
 
+turret_test = [
+    {
+        "override_velocity_theta": None,
+        "drone_mode": True,
+        "override_velocity_x": None,
+        "override_velocity_y": None,
+        "set_x": 0,
+        "set_y": 0,
+        "set_theta": 0,
+        "autonomous_speed" : 75,
+        "flywheel_speed" : 25,
+    },
+    {
+        "wait" : 3,
+    },
+    {
+        "shoot_at_theta" : 90,
+    },
+    {
+        "wait" : 0.7,
+    },
+    {
+        "shoot_disc" : 1,
+    },
+    {
+        "shoot_at_theta" : 0,
+    },
+    {
+        "wait" : 0.7,
+    },
+    {
+        "shoot_disc" : 1,
+    },
+    {
+        "shoot_at_theta" : -90,
+    },
+    {
+        "wait" : 0.7,
+    },
+    {
+        "shoot_disc" : 1,
+    },
+]
+
 #endregion
 # Initializes a robot object
 r = Robot()
@@ -3436,7 +3509,8 @@ r.set_team("neutral")
 init()
 r.init()
 
-r.set_autonomous_procedure(match_auto_two_squares)
+r.set_autonomous_procedure(turret_test)
+# r.run_autonomous()
 
 #region GUI
 
@@ -3528,8 +3602,9 @@ def output_data():
     global serial_output_delay
     serial_output_delay = 0.2
 
-    print(brain.timer.value(), r.x_from_gps, r.y_from_gps, r.theta, closest_angle(get_angle_to_object((r.x_from_gps, r.y_from_gps), (r.target_goal.x_pos, r.target_goal.y_pos)) - r.initial_theta_field))
+    print(brain.timer.value(), r.x_from_gps, r.y_from_gps, r.theta, r.theta_field, closest_angle(get_angle_to_object((r.x_from_gps, r.y_from_gps), (r.target_goal.x_pos, r.target_goal.y_pos)) - r.initial_theta_field), r.initial_theta_field)
 
+    # print(brain.timer.value(), r.theta, r["turret_theta"], r.compute_turret_ticks_to_angle(turret_motor.position(DEGREES)))
     # print(brain.timer.value(), flywheel_motor.velocity(PERCENT), r.flywheel_speed)
     
     # print(r.compute_angle_to_turret_ticks(100), r.compute_distance_to_goal(r.red_goal), r.compute_distance_to_goal(r.blue_goal))
