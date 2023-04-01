@@ -4,12 +4,12 @@
 		"json": 1
 	},
 	"project": {
-		"name": "CODE",
+		"name": "GRADIENT",
 		"description": "",
 		"creationDate": "Wed, 22 Mar 2023 21:00:23 GMT",
 		"platform": "V5",
 		"language": "python",
-		"slot": 2,
+		"slot": 3,
 		"sdkVersion": "V5_1_0_1_15",
 		"python": {
 			"main": "src/main.py"

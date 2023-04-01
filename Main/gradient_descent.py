@@ -70,7 +70,7 @@ def compute_gradient(f, position):
   
   return grads
 
-f = lambda x: -2*x[0]**2 - (x[1]-np.sqrt(2))**2 * np.sin(x[0]) - 1/10 * (x[2] ** 4)
+f = lambda x: -2*x[0]**2 - (x[1]-np.sqrt(2))**2 - 1/10 * ((x[2]-5) ** 4)
 
 guess_position = [(np.random.rand() - 0.5) * 10 ,(np.random.rand() - 0.5) * 10, (np.random.rand() - 0.5) * 10]
 grad = compute_gradient(f, guess_position)

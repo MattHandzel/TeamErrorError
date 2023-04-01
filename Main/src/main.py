@@ -35,7 +35,7 @@ controller_1 = Controller(PRIMARY)
 controller_2 = Controller(PARTNER)
 
 global programming_chassis
-programming_chassis = True
+programming_chassis = False
 
 if not programming_chassis:
     left_motor_a = Motor(Ports.PORT10, GearSetting.RATIO_18_1, False)
@@ -100,6 +100,80 @@ DISC_SIGNATURES = [vision__DISC, vision__BRIGHT_DISK]
 #endregion
 
 #region Misc/Helper Functions/Classes
+
+class CircularArray:
+    arr = []
+    index = 0
+    length: int = 0
+
+    def __init__(self, length):
+        self.length = length
+        self.arr = [0 for i in range(length)]
+
+    def append(self, item):
+        if len(self.arr) < self.length:
+            self.arr.append(item)
+        else:
+            self.arr[self.index] = item
+        
+        self.index = (self.index + 1) % self.length
+    
+    def pop(self):
+        item = self.arr.pop(self.index)
+        self.index -= 1
+        if self.index < 0:
+            self.index += len(self.arr) - 1
+        return item
+        
+
+class Vector:
+    '''
+    Vector class I wrote because basic python lists are lame, this is as slow as normal python, should be ideally replaced with numpy arrays
+    '''
+    def __init__(self, data):
+        self.data = data
+
+    def __add__(self, other):
+        assert len(other) == len(self.data)
+        return Vector([other[i] + self.data[i] for i in range(len(self.data))])
+
+    def __sub__(self, other):
+        assert len(other) == len(self.data)
+        return Vector([self.data[i] - other[i] for i in range(len(self.data))])
+  
+    def __mul__(self, other):
+        return Vector([x * other for x in self.data])
+  
+    def __rmul__(self, other):
+        return Vector([x * other for x in self.data])
+  
+    def __rdev__(self, other):
+        return Vector([other / x for x in self.data])
+    
+    def __truediv__(self, other):
+        return Vector([x / other for x in self.data])
+
+    def __getitem__(self, key):
+        return self.data[key]
+
+    def __len__(self):
+        return len(self.data)
+
+    def __repr__(self):
+        return "Vector:	" + repr(self.data)
+
+class numpy:
+    @staticmethod
+    def abs(vector):
+        return Vector([abs(x) for x in vector])
+
+    @staticmethod
+    def dot(v1, v2):
+        assert len(v1) == len(v2)
+        return Vector([v1[i] * v2[i] for i in range(len(v1))])
+
+def magnitude(vector):
+    return sum([x**2 for x in vector])**0.5
 
 def argmax(arr):
     return arr.index(max(arr))
@@ -279,29 +353,6 @@ def rotate_vector_2d(x, y, theta):
     y = x_old * math.sin(theta) + y * math.cos(theta)
 
     return x, y
-class Vector:
-    '''
-    Vector class I wrote because basic python lists are lame, this is as slow as normal python, should be ideally replaced with numpy arrays
-    '''
-    def __init__(self, data):
-        self.data = data
-
-    def __add__(self, other):
-        assert len(other) == len(self.data)
-        return [other[i] + self.data[i] for i in range(len(self.data))]
-
-    def __sub__(self, other):
-        assert len(other) == len(self.data)
-        return Vector([other[i] - self.data[i] for i in range(len(self.data))])
-
-    def __getitem__(self, key):
-        return self.data[key]
-
-    def __len__(self):
-        return len(self.data)
-
-    def __repr__(self):
-        return "Vector:	" + repr(self.data)
 
 class PID:
     '''
@@ -375,6 +426,7 @@ def init():
     right_motor_b.set_stopping(BRAKE)
 
     flywheel_motor.spin(FORWARD, 0, VOLT)
+    flywheel_motor.set_stopping(BRAKE)
 
     left_motor_a.set_velocity(0, PERCENT)
     right_motor_a.set_velocity(0, PERCENT)
@@ -928,6 +980,11 @@ class Robot:
     flywheel_angle_offset = 0
 
     target_goal = None 
+
+    flywheel_kP = 0.6 # before aws 0.03
+    flywheel_kI = 0.0002 / 0.022 # before was 0.0004 (this worked pretty well)
+    flywheel_kD = 0.03 * 0.022
+    flywheel_kF = 0.105
     
     flywheel_speed_levels = [
         0,
@@ -955,6 +1012,8 @@ class Robot:
         71,
         100,
     ]
+
+    flywheel_instantaneous_speed = 0
     
     distance_speed_maps = {
         0: 0,
@@ -1011,6 +1070,8 @@ class Robot:
         "theta" : 0,
         "theta_vel" : 0,
         "time" : 0,
+
+        "flywheel_instantaneous_speed" : 0,
 
         "min_velocity" : 0,
         "slow_down_distance" : 1,
@@ -1395,7 +1456,7 @@ class Robot:
         rollers_done = self["roller_and_intake_motor_1_done"] and self["roller_and_intake_motor_2_done"]
         # passed_target_rotation = (self.previous_state["theta"] < self.target_state["theta"] and self.theta > self.target_state["theta"]) or (self.previous_state["theta"] > self.target_state["theta"] and self.theta < self.target_state["theta"])
         passed_target_rotation = False
-
+        self["flywheel_instantaneous_speed"] = flywheel_motor.velocity(PERCENT)
         if (is_intersecting or is_close_enough) and (abs(self.theta - self.target_state["theta"]) < target_state_theta_tolerance or passed_target_rotation) and rollers_done and self.shoot_disc <= 0 and (turret_motor.is_done() or abs(self["turret_theta"] - self.target_state["turret_theta"]) < 0.5):
             self.target_reached = True
 
@@ -1546,45 +1607,48 @@ class Robot:
         speed_alpha = clamp(speed_alpha * self.delta_time, 1, 0)
 
         self.flywheel_avg_speed = flywheel_motor.velocity(PERCENT) * speed_alpha + self.flywheel_avg_speed * (1 - speed_alpha)
+        self.flywheel_instantaneous_speed = flywheel_motor.velocity(PERCENT)
 
         if self.flywheel_speed == 0:
             self.flywheel_motor_average_output = 0
 
-        kP = 0.6 # before aws 0.03
-        kI = 0.0002 / 0.022 # before was 0.0004 (this worked pretty well)
-        kD = 0.03 * 0.022
+        # self.flywheel_kP = 0.6 # before aws 0.03
+        # self.flywheel_kI = 0.0002 / 0.022 # before was 0.0004 (this worked pretty well)
+        # self.flywheel_kD = 0.03 * 0.022
 
         flywheel_recovery = 0.55
 
         # Boolean to determine if the flywheel is recovering from a disc being shot
-        flywheel_recovery_mode = (self.flywheel_recovery_timer.value()) < (flywheel_recovery * (sqrt(self.flywheel_speed / 60))) and self.is_shooting
+        flywheel_recovery_mode = (self.flywheel_recovery_timer.value()) < (flywheel_recovery * (sqrt((self.flywheel_speed if self.flywheel_speed > 0 else 0) / 60))) and self.is_shooting
 
         # If we are shooting then do NOT increment the integral term and greatly increase the proportional term so that we can increase our speed much faster
-        if flywheel_recovery_mode:
-            # self.flywheel_recovery_timer.reset()
-            kI = 0
-            kD = 0
-            kP = 2.4
+        # if flywheel_recovery_mode:
+        #     # self.flywheel_recovery_timer.reset()
+        #     kI = 0
+        #     kD = 0
+        #     kP = 2.4
 
-        proportional_term_flywheel = kP * (self.flywheel_speed - flywheel_motor.velocity(PERCENT))
-        derivative_term_flywheel = kD * (self.flywheel_avg_speed - self.previous_flywheel_avg_speed) / self.delta_time
-
+        proportional_term_flywheel = self.flywheel_kP * (self.flywheel_speed - flywheel_motor.velocity(PERCENT))
+        derivative_term_flywheel = self.flywheel_kD * (self.flywheel_avg_speed - self.previous_flywheel_avg_speed) / self.delta_time
         # derivative_term_flywheel = clamp(derivative_term_flywheel, 1, -1)
 
-        self.integral_term_flywheel += self.delta_time * kI * (self.flywheel_speed - self.flywheel_avg_speed) + (self.flywheel_speed - self.previous_flywheel_speed) * 0.105
+        self.integral_term_flywheel += self.delta_time * self.flywheel_kI * (self.flywheel_speed - self.flywheel_avg_speed) + (self.flywheel_speed - self.previous_flywheel_speed) * self.flywheel_kF
 
         # Clamp the intergral term so it doesn't grow to be too extreme
         self.integral_term_flywheel = clamp(self.integral_term_flywheel, MAX_VOLTAGE, -MAX_VOLTAGE) 
 
-        if flywheel_recovery_mode:
-            target_flywheel_output = self.integral_term_flywheel + proportional_term_flywheel - derivative_term_flywheel
-        else:
-            output_alpha = 1
-            output_alpha = clamp(output_alpha * self.delta_time, 1, 0)
+        # if flywheel_recovery_mode:
+        #     target_flywheel_output = self.integral_term_flywheel + proportional_term_flywheel - derivative_term_flywheel
+        # else:
+            # output_alpha = 1 * 10 # CHANGEDI
+            # output_alpha = clamp(output_alpha * self.delta_time, 1, 0)
 
-            self.average_target_flywheel_output = self.average_target_flywheel_output * (1-output_alpha) + (self.integral_term_flywheel + proportional_term_flywheel - derivative_term_flywheel) * output_alpha  
+            # self.average_target_flywheel_output = self.average_target_flywheel_output * (1-output_alpha) + (self.integral_term_flywheel + proportional_term_flywheel - derivative_term_flywheel) * output_alpha  
         
-            target_flywheel_output = self.average_target_flywheel_output
+            # target_flywheel_output = self.average_target_flywheel_output
+        target_flywheel_output = (self.integral_term_flywheel + proportional_term_flywheel - derivative_term_flywheel)
+        if self.flywheel_speed == 0:
+            target_flywheel_output = 0
 
         flywheel_motor.spin(FORWARD, clamp(target_flywheel_output, MAX_VOLTAGE, -MAX_VOLTAGE), VOLT)
 
@@ -2455,7 +2519,7 @@ def driver_control():
             
             # If the robot is closer to one goal or the other 
             goal = r.red_goal if r.x_from_gps + r.y_from_gps > 0 else r.blue_goal
-            angle = closest_angle(get_angle_to_object((r.x_from_gps, r.y_from_gps), (r.target_goal.x_pos, r.target_goal.y_pos)) - r.initial_theta_field)s
+            angle = closest_angle(get_angle_to_object((r.x_from_gps, r.y_from_gps), (r.target_goal.x_pos, r.target_goal.y_pos)) - r.initial_theta_field)
             
             print("going to angle", angle)
             r.set_target_state(
@@ -3626,9 +3690,298 @@ def output_data():
     # print(brain.timer.value(), r.delta_x_from_encoders, r.delta_y_from_encoders, r.delta_x_from_gps_robots_reference_frame, r.delta_y_from_gps_robots_reference_frame)
     pass
 
+def reset_flywheel_during_tuning():
+    r.integral_term_flywheel = 0
+    r.flywheel_motor_average_output = 0
+    
+    r.set_target_state({
+        "flywheel_speed" : 0,
+    })
+
+    while abs(r.flywheel_instantaneous_speed) > 0.1:
+        r.set_target_state({
+            "flywheel_speed" : 0,
+        })
+        wait(0.1, SECONDS)
+
+    r.integral_term_flywheel = 0
+    r.flywheel_motor_average_output = 0
+
+def see_how_long_it_takes_for_flywheel_to_reach_target_speed(position):
+    if type(position) == Vector:
+        r.flywheel_kP, r.flywheel_kI, r.flywheel_kD = position.data
+    else:
+        r.flywheel_kP, r.flywheel_kI, r.flywheel_kD = position
+
+    flywheel_target_speed = 20
+
+    reset_flywheel_during_tuning()
+    wait(1, SECONDS)
+
+    # print("Flywheel speed is at 0 percent!", r.flywheel_instantaneous_speed, r.flywheel_avg_speed)
+
+    r.set_target_state({
+        "flywheel_speed" : flywheel_target_speed
+    })
+    
+    # Just in case theres some wacky thing going on with this
+    while r.flywheel_instantaneous_speed < 1:
+        wait(0.01, SECONDS)
+    
+    start_time = brain.timer.value()
+
+    while r.flywheel_instantaneous_speed < flywheel_target_speed:
+        # If we are taking a long time to converge, then increment kP 
+        if (start_time - brain.timer.value() > 2):
+            r.flywheel_kP += 0.001
+            print(" we adding to kP!")
+        wait(0.01, SECONDS)
+
+    time_until_hit = brain.timer.value()
+
+    # print("It took ", time_until_hit - start_time, " ms to hit the target speed!")
+
+    reset_flywheel_during_tuning()
+
+    return (time_until_hit - start_time)
+
+
+def see_how_long_it_takes_for_flywheel_to_get_converge(position):
+    if len(position) == 3:
+        if type(position) == Vector:
+            r.flywheel_kP, r.flywheel_kI, r.flywheel_kF = position
+        else:
+            r.flywheel_kP, r.flywheel_kI, r.flywheel_kF = position
+        # if type(position) == Vector:
+        #     r.flywheel_kP, r.flywheel_kI, r.flywheel_kD = position
+        # else:
+        #     r.flywheel_kP, r.flywheel_kI, r.flywheel_kD = position
+    elif len(position) == 4:
+        if type(position) == Vector:
+            r.flywheel_kP, r.flywheel_kI, r.flywheel_kD, r.flywheel_kF = position
+        else:
+            r.flywheel_kP, r.flywheel_kI, r.flywheel_kD, r.flywheel_kF = position
+
+
+    flywheel_target_speed = 20
+    max_time_until_convergence = 9
+
+    reset_flywheel_during_tuning()
+    wait(1, SECONDS)
+
+    # print("Flywheel speed is at 0 percent!", r.flywheel_instantaneous_speed, r.flywheel_avg_speed)
+
+    r.set_target_state({
+        "flywheel_speed" : flywheel_target_speed
+    })
+    while r.flywheel_instantaneous_speed < 1:
+        wait(0.001, SECONDS)
+    
+    start_time = brain.timer.value()
+
+    previous_speeds = CircularArray(100)
+
+    stdev = std(previous_speeds.arr)
+    average = sum(previous_speeds.arr) / len(previous_speeds.arr)
+    accel = (r.state["flywheel_instantaneous_speed"] - r.previous_state["flywheel_instantaneous_speed"]) / r.delta_time
+    # curvature = (delta_time * (r.previous_state["flywheel_speed"] - r.state["flywheel_speed"]))
+
+    delta_time = 0.01
+    # Wait for the flywheel to get to the target s;speed
+    while r.flywheel_instantaneous_speed < flywheel_target_speed or abs(average - r.flywheel_speed) > 1:
+        # If we are taking a long time to converge, then increment kP 
+        if (brain.timer.value()-start_time > max_time_until_convergence):
+            break
+        
+        accel = (r.state["flywheel_instantaneous_speed"] - r.previous_state["flywheel_instantaneous_speed"]) / r.delta_time
+        stdev = std(previous_speeds.arr)
+        average = sum(previous_speeds.arr) / len(previous_speeds.arr)
+        # print("Average:\t", average, "Std:\t", stdev, "Accel:\t", accel)
+
+        previous_speeds.append(r.flywheel_instantaneous_speed)
+        
+        wait(delta_time, SECONDS)
+
+    time_until_hit = brain.timer.value()
+    
+    print("before ", previous_speeds.arr)
+    [previous_speeds.pop() for b in range(round(previous_speeds.length * 0.8))]
+    print("after ", previous_speeds.arr)
+    
+    raise NameError("Ayyyoo matt you still need to test this out")
+    # USE CURIVATURE 
+    while abs(average - r.flywheel_speed) > 0.1 or stdev > 0.8:
+        # print("Average:\t", average, "Std:\t", stdev, "Accel:\t", accel)
+        # If we are taking a long time to converge, then increment kP 
+        if (brain.timer.value()-start_time > max_time_until_convergence):
+            break
+        stdev = std(previous_speeds.arr)
+        average = sum(previous_speeds.arr) / len(previous_speeds.arr)
+        accel = (r.state["flywheel_instantaneous_speed"] - r.previous_state["flywheel_instantaneous_speed"]) / r.delta_time
+        
+        previous_speeds.append(r.flywheel_instantaneous_speed)
+        wait(0.01, SECONDS)
+
+    time_until_converge = brain.timer.value()
+    delta_time = (time_until_converge - start_time)
+
+    if delta_time > max_time_until_convergence:
+        return delta_time + sqrt(abs(average - r.flywheel_speed)) + sqrt(stdev)
+    print("It took ", delta_time, " seconds to hit the target speed!")
+
+    reset_flywheel_during_tuning()
+
+    return (time_until_converge - start_time)
+
+
+def compute_gradient(position):
+  grads = []
+  vectors = []
+
+  for i, pos in enumerate(position):
+    vectors.append(Vector([0] * i + [1] + [0] * (len(position) - i - 1)))
+
+
+  for vector in vectors:
+    epsilon = 1e-2
+    h = vector * epsilon
+    print("h is", h)
+    print("vector plus h is", vector + h)
+    print("vector minus h is", vector - h)
+    print("f of vector + h: ", f(vector + h))
+    print("f of vector - h: ", f(vector - h))
+
+
+    print("dervative is", (f(vector + h) - f(vector - h)) * (1 / (2 * (epsilon))))
+
+    grads.append((f(vector + h) - f(vector - h)) * (1 / (2 * (epsilon))))
+  
+  return grads
+
+def compute_gradient_of_flywheel(position):
+    f = see_how_long_it_takes_for_flywheel_to_get_converge
+    multiplication_constants = [0.1, 0.005, 0.00001, 0.1]
+    grads = []
+    vectors = []
+
+    # create identity matrix for position vector
+    for i in range(len(position)):
+        vectors.append(Vector([0] * i + [1] + [0] * (len(position) - i - 1)))
+
+    for i in range(len(position)):
+        vectors[i].data[i] *= multiplication_constants[i]
+    
+    for vector in vectors:
+        epsilon = 1e-1
+        h = vector * epsilon
+        f_plus_h = 1000
+        f_minus_h = -1000
+        
+        # All of the constants cannot be negative
+        if position[len(grads)]-h[len(grads)] < 0:
+            print("h[",len(grads),"] is too small, making it equal to", position[len(grads)])
+            h.data[len(grads)] = position[len(grads)]
+
+        while f_plus_h < 0.100 or f_minus_h < 0.100: # abs(f_plus_h - f_minus_h) > 0.500 or :
+            f_plus_h = f(Vector(position) + h)
+            f_minus_h = f(Vector(position) - h)
+
+        # print("h is", h)
+        # print("vector plus h is", Vector(position) + h)
+        # print("vector minus h is", Vector(position) - h)
+        # print("f of vector + h: ", f_plus_h)
+        # print("f of vector - h: ", f_minus_h)
+
+        # print("dervative is", (f_plus_h - f_minus_h) * (1 / (2 * (epsilon))))
+
+        grads.append((f_plus_h - f_minus_h) * (1 / (2 * (epsilon))))
+
+    return grads
+
+def tune_flywheel(initial_pos):
+    f = see_how_long_it_takes_for_flywheel_to_get_converge
+    guess_position = initial_pos
+    grad = Vector([0 for i in (guess_position)])
+    gradients = []
+    max_epsilons = Vector([0.01, 0.01, 0.01]) * 2
+    max_attempts = 10
+    epsilon = max_epsilons
+    attempts = 0
+    gradient_ascent_or_descend_constant = -1
+    positions = []
+    while attempts < max_attempts:
+        print("Attempt ", attempts, ": | t =", brain.timer.value(), "| r =", guess_position, " | f(r) =", f(guess_position))
+        grad = compute_gradient_of_flywheel(guess_position)
+        delta_position = numpy.dot(Vector(grad), epsilon)
+        guess_position = Vector(guess_position) + delta_position * gradient_ascent_or_descend_constant
+
+        # Make it so that the minimum value for kP, kI, and kF is zero
+        guess_position.data = [max(guess_position[i], 0) for i in range(len(guess_position))]
+
+        print("\tGrad\t", grad)
+        print("\tD_R\t", delta_position.data)
+        print("\tR:\t", guess_position.data)
+        positions.append(guess_position)
+        gradients.append(grad)
+        attempts += 1
+        epsilon = max_epsilons  
+
+        # wait for flywheel to cool down a little
+        wait(20, SECONDS)
+    print("it took ", attempts, "attempts to find the minimum, final position is", guess_position, "with height of ", f(guess_position))
+
+    print("positions = ", [pos.data for pos in positions])
+    print("gradients = ", [pos.data for pos in gradients])
+
+# [-5350.0, -1400.0, 950.0]
+
+        # Grad     [0.1548767, -0.7749939, 0.2749634, 0.4650879]
+        # D_R      [0.0007743835, -0.003874969, 0.001374817, 0.000232544]
+        # R:       [0.3367254, 0.2119748, 0, 0.10918]
+        # R:       [0.1827017, 0.1534541, 0.1499479]
+
 # Output one pass of the data to init the serial_output_delay
 output_data()
-competition = Competition(driver_control, r.run_autonomous)
+initial_pos = (0.6, 0.2, 0.11)
+initial_pos = [0.2588518, 0.1403032, 0.0950996]
+initial_pos = [0.217002, 0.1525032, 0.09129846]
+initial_pos = [0.1885019, 0.146754, 0.1340479]
+# print(see_how_long_it_takes_for_flywheel_to_get_converge(initial_pos))
+tune_flywheel(initial_pos)
+# grads = []R:       [0.1827017, 0.1534541, 0.1499479]
+# for i in range(5):
+#     grads.append(compute_gradient_of_flywheel(initial_pos))
+
+# after_5 = grads.copy()
+# for i in range(5):
+#     grads.append(compute_gradient_of_flywheel(initial_pos))
+
+# after_10 = grads.copy()
+
+# print(after_5)
+# print(after_10)
+# print(grads)
+raise
+guess_position = [(np.random.rand() - 0.5) * 10 ,(np.random.rand() - 0.5) * 10, (np.random.rand() - 0.5) * 10]
+grad = compute_gradient(f, guess_position)
+max_epsilon = 0.1
+max_attempts = 100
+epsilon = max_epsilon
+attempts = 0
+gradient_ascent_or_descend_constant = 1
+positions = []
+while attempts < max_attempts:
+    noise = Vector([np.random.normal() for _ in range(len(guess_position))])
+    delta_position = Vector(grad) * epsilon + noise * epsilon * (max_attempts - attempts) / max_attempts * 5
+    # print("grad is", grad)
+    # print("delta position is", delta_position)
+    guess_position = Vector(guess_position) + delta_position * gradient_ascent_or_descend_constant
+    # print("position is", guess_position)
+    grad = compute_gradient(f, guess_position)
+    positions.append(guess_position)
+    attempts += 1
+    epsilon = max_epsilon  
+print("it took ", attempts, "attempts to find the minimum, final position is", guess_position, "with height of ", f(guess_position))
 
 #region TODO LIST
 # ! PRIORITY
