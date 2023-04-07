@@ -17,6 +17,54 @@ after_5 = [[111.5, -28.49996, -32.99999], [-21.0, -13.49997, -55.99999], [104.0,
 print(np.average(after_5, 0))
 print(np.std(after_5,0))
 
+
+class CircularArray:
+
+    def __init__(self, length):
+        self.length = length
+        self.arr = []
+        self.index = 0
+        self.length: int = length
+
+    def append(self, item):
+        if len(self.arr) < self.length:
+            self.arr.append(item)
+            self.index = len(self.arr) % self.length
+        else:
+            self.arr[self.index] = item
+            self.index = (self.index + 1) % self.length
+    
+    def pop_newest(self):
+        self.index -= 1
+        item = self.arr.pop(self.index)
+        if self.index < 0:
+            self.index = len(self.arr)
+        return item
+
+    def pop_oldest(self):
+        # Removes the older
+        item = self.arr.pop(self.index)
+        if self.index >= len(self.arr):
+            self.index = 0
+        return item
+
+a = CircularArray(10)
+
+for i in range(15):
+    a.append(i)
+    print(a.arr)
+    print("\n\n")
+
+for i in range(5):
+    print(a.pop_oldest())
+    print(a.arr)
+    print("\n\n")
+  
+for i in range(15, 25):
+    a.append(i)
+    print(a.arr)
+    print("\n\n")
+
 # print(np.average(after_10, 0))
 # print(np.std(after_10,0))
 

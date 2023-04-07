@@ -47,8 +47,10 @@ if not programming_chassis:
     inertial = Inertial(Ports.PORT8)
 
     flywheel_motor = Motor(Ports.PORT20, GearSetting.RATIO_6_1, False)
+    gps = Gps(Ports.PORT3)
 
 else:
+    gps = Gps(Ports.PORT12)
     # left_motor_a = Motor(Ports.PORT20, GearSetting.RATIO_18_1, False)
     # left_motor_b = Motor(Ports.PORT10, GearSetting.RATIO_18_1, False)
 
@@ -84,7 +86,6 @@ expansion = Pneumatics(brain.three_wire_port.b)
 
 flywheel_status_light = Led(brain.three_wire_port.h)
 
-gps = Gps(Ports.PORT12)
 
 # Vision signatures (disc signatures if we want to autoamtically sense discs, blue and red signatures for the red ang blue goals)
 vision__DISC = Signature(1, 6911, 8133, 7522, -6787, -5937, -6362, 1.3, 0)
@@ -102,30 +103,33 @@ DISC_SIGNATURES = [vision__DISC, vision__BRIGHT_DISK]
 #region Misc/Helper Functions/Classes
 
 class CircularArray:
-    arr = []
-    index = 0
-    length: int = 0
 
     def __init__(self, length):
         self.length = length
-        self.arr = [0 for i in range(length)]
+        self.arr = []
+        self.index = 0
 
     def append(self, item):
         if len(self.arr) < self.length:
             self.arr.append(item)
+            self.index = len(self.arr) % self.length
         else:
             self.arr[self.index] = item
-        
-        self.index = (self.index + 1) % self.length
+            self.index = (self.index + 1) % self.length
     
-    def pop(self):
-        item = self.arr.pop(self.index)
+    def pop_newest(self):
         self.index -= 1
+        item = self.arr.pop(self.index)
         if self.index < 0:
-            self.index += len(self.arr) - 1
+            self.index = len(self.arr)
         return item
-        
 
+    def pop_oldest(self):
+        # Removes the older
+        item = self.arr.pop(self.index)
+        if self.index >= len(self.arr):
+            self.index = 0
+        return item
 class Vector:
     '''
     Vector class I wrote because basic python lists are lame, this is as slow as normal python, should be ideally replaced with numpy arrays
@@ -266,13 +270,10 @@ def get_angle_to_object(pos_1, pos_2):
     '''
 
     # If the passed in objects are GameObjects then change the pos's into a tuple of x,y values
-    ang = atan2(pos_2[0] - pos_1[0], pos_2[1] - pos_1[1]) * RAD_TO_DEG
-    if ang > 180:
-        ang -= 360
-    if ang < -180:
-        ang += 360
-
-    return ang
+    ang = atan2(pos_2[1] - pos_1[1], pos_2[0] - pos_1[0]) * RAD_TO_DEG
+    
+    # converts angle from rotation to heading
+    return closest_angle(90 - ang)
 
 def check_intersection(line1, line2):
 
@@ -460,7 +461,8 @@ def init():
     brain.screen.draw_rectangle(10, 10, 10, 10, Color.WHITE)
 
     if programming_chassis:
-        gps.set_origin(190, 60, MM)
+        # gps.set_origin(190, 60, MM)
+        gps.set_origin(180, 35, MM)
     else: 
         gps.set_origin(288, 30, MM)
 
@@ -947,7 +949,11 @@ class Robot:
     #endregion
 
     #region Flywheel Variables    
-    turret_initial_position = -0
+    turret_initial_position = 0
+
+    turret_centered_position = 90
+
+    turret_far_position = 140
     
     # Set the offset for the flywheel from the center of the robot
     flywheel_offset_x = 0   
@@ -1023,6 +1029,7 @@ class Robot:
 
     turret_theta_range = 40
 
+    max_turret_torque = 0
     #endregion
     
     #region Drivetrain Variables
@@ -1077,6 +1084,7 @@ class Robot:
         "slow_down_distance" : 1,
         "tolerance" : 0.5,
 
+        "shoot_at_theta" : None,
 
         "autonomous_speed" : 0,
 
@@ -1118,10 +1126,11 @@ class Robot:
         "flywheel_torque" : 0,
 
         "is_shooting" : False,
+        "turret_torque" : 0,
 
         "auto_aim" : False,
         "auto_orientate" : False,
-        "turret_theta" : 0,
+        "turret_theta" : turret_centered_position,
     }
 
     target_state = {
@@ -1326,7 +1335,7 @@ class Robot:
 
             # x_from_gps, y_from_gps = rotate_vector_2d(x_from_gps, y_from_gps, self.gps_theta_on_robot * DEG_TO_RAD)
 
-            theta_field = gps.rotation() - self.gps_theta_on_robot
+            theta_field = gps.heading() - self.gps_theta_on_robot
 
             # If we want to figure out our velocity from the gps
             self.delta_x_gps_field = gps.x_position(DistanceUnits.CM) - self.previous_x_gps_field 
@@ -1354,7 +1363,7 @@ class Robot:
         self.x_pos += self.delta_x_encoders_relative * (1-gps_encoder_blend_alpha) + (self.delta_x_gps_field-self.x_pos) * gps_encoder_blend_alpha 
         self.y_pos += self.delta_y_encoders_relative * (1-gps_encoder_blend_alpha) + (self.delta_y_gps_field-self.y_pos) * gps_encoder_blend_alpha
         
-        gps_alpha = 0.1
+        gps_alpha = 0.6
         gps_alpha = clamp(gps_alpha * self.delta_time, 1, 0)
         
         self.x_from_gps = self.x_from_gps * (1-gps_alpha) + x_from_gps * gps_alpha
@@ -1438,12 +1447,20 @@ class Robot:
         
         elif self.team_color == "red":
             self.target_goal = self.red_goal
+        
+
+        self.turret_torque = turret_motor.torque()
+        self.state["turret_torque"] = self.turret_torque
 
         # If the turret is not initialized and we clicked the limit switch then set that to 0
-        if not self.turret_initialized and turret_limit_switch.value() == 0:
-            turret_motor.set_position(self.turret_initial_position, DEGREES)
+        if not self.turret_initialized and self.turret_torque > 0.8:
+            print(turret_motor.position()) # 81.6 degrees going to the right, -55.4 degrees going to the left
+            turret_motor.reset_position()
+            turret_motor.set_position(self.turret_centered_position, DEGREES)
             self.turret_initialized = True
-        
+
+        self.max_turret_torque = max(self.max_turret_torque, self.turret_torque) 
+        print((self.turret_torque - self.previous_state["turret_torque"]), self.previous_state["turret_torque"], self.turret_torque, self.max_turret_torque)
         # Using the check_if_intersect function, see if the robot passes the line segment that makes up the target position
         line1 = [self.previous_state["x_pos"], self.previous_state["y_pos"], self.state["x_pos"], (self.state["y_pos"] )]
         line1b = [self.previous_state["x_pos"], self.previous_state["y_pos"], 2 * (self.state["x_pos"] - self.previous_state["x_pos"]), 2 * (self.state["y_pos"] - self.previous_state["y_pos"])]
@@ -1477,9 +1494,16 @@ class Robot:
         if self.target_state["y_pos"] != None:
             delta_y = self.target_state["y_pos"] - self.y_pos
 
-        if self.target_state["theta"] != None:
+        if self.target_state["shoot_at_theta"] != None:        
+            # turret_theta_range is the entire theta that the turret can sweep, half of that is the amount that the turret can turn right or left, and we multiply that by a constant so that there is some room for error
+            if abs(self.theta - self.target_state["shoot_at_theta"]) > self.turret_theta_range / 2 * 0.5: 
+                delta_theta = self.target_state["shoot_at_theta"] - self.theta
+            else:
+                delta_theta = 0.0
+
+        if self.target_state["theta"] != None and self.target_state["shoot_at_theta"] == None:
             delta_theta = self.target_state["theta"] - self.theta
-        
+
         # if self.target_state["x_pos"] != None:
         #     delta_x = self.target_state["x_pos"] - self.x_gps_relative
         
@@ -1490,12 +1514,9 @@ class Robot:
         #     delta_theta = self.target_state["theta"] - self.theta
         
         # Turn via the shortest path
-        if delta_theta > 180:
-            delta_theta -= 360
-        elif delta_theta < -180:
-            delta_theta += 360
-
-        orientation_tolerance = 10 
+        delta_theta = closest_angle(delta_theta)
+        
+        orientation_tolerance = 8
         position_tolerance = 14
 
         max_velocity = 100
@@ -1520,10 +1541,10 @@ class Robot:
         target_x_vel = clamp(target_x_vel, max_velocity, -max_velocity) * (self.autonomous_speed / 100 if self.running_autonomous else 1)
         target_y_vel = clamp(target_y_vel, max_velocity, -max_velocity) * (self.autonomous_speed / 100 if self.running_autonomous else 1)
 
-        target_theta_vel = ((clamp(delta_theta, orientation_tolerance, -orientation_tolerance) * max_velocity / (orientation_tolerance - 2.25)) ** 2) / max_velocity * sign(delta_theta) * (1 if self.running_autonomous else (0.1 if programming_chassis else 1))
+        target_theta_vel = ((clamp(delta_theta, orientation_tolerance, -orientation_tolerance) * max_velocity / (orientation_tolerance - 2.25)) ** 2) / max_velocity * sign(delta_theta) * (1 if self.running_autonomous else (-1 if programming_chassis else 1))
         
         target_theta_vel = clamp(target_theta_vel, max_velocity, -max_velocity)
-
+        # print("estimate_state", delta_theta ** 2 * sign(delta_theta), r.theta, self.target_state["theta"],  target_theta_vel)
         if self.target_state["override_velocity_x"] != None:
             target_x_vel = self.target_state["override_velocity_x"]
         if self.target_state["override_velocity_y"] != None:
@@ -1612,9 +1633,9 @@ class Robot:
         if self.flywheel_speed == 0:
             self.flywheel_motor_average_output = 0
 
-        # self.flywheel_kP = 0.6 # before aws 0.03
-        # self.flywheel_kI = 0.0002 / 0.022 # before was 0.0004 (this worked pretty well)
-        # self.flywheel_kD = 0.03 * 0.022
+        self.flywheel_kP = 0.6 # before aws 0.03
+        self.flywheel_kI = 0.0002 / 0.022 # before was 0.0004 (this worked pretty well)
+        self.flywheel_kD = 0.03 * 0.022
 
         flywheel_recovery = 0.55
 
@@ -1622,11 +1643,11 @@ class Robot:
         flywheel_recovery_mode = (self.flywheel_recovery_timer.value()) < (flywheel_recovery * (sqrt((self.flywheel_speed if self.flywheel_speed > 0 else 0) / 60))) and self.is_shooting
 
         # If we are shooting then do NOT increment the integral term and greatly increase the proportional term so that we can increase our speed much faster
-        # if flywheel_recovery_mode:
-        #     # self.flywheel_recovery_timer.reset()
-        #     kI = 0
-        #     kD = 0
-        #     kP = 2.4
+        if flywheel_recovery_mode:
+            # self.flywheel_recovery_timer.reset()
+            self.flywheel_kP = 2.4 # before aws 0.03
+            self.flywheel_kI = 0 # before was 0.0004 (this worked pretty well)
+            self.flywheel_kD = 0
 
         proportional_term_flywheel = self.flywheel_kP * (self.flywheel_speed - flywheel_motor.velocity(PERCENT))
         derivative_term_flywheel = self.flywheel_kD * (self.flywheel_avg_speed - self.previous_flywheel_avg_speed) / self.delta_time
@@ -1637,16 +1658,16 @@ class Robot:
         # Clamp the intergral term so it doesn't grow to be too extreme
         self.integral_term_flywheel = clamp(self.integral_term_flywheel, MAX_VOLTAGE, -MAX_VOLTAGE) 
 
-        # if flywheel_recovery_mode:
-        #     target_flywheel_output = self.integral_term_flywheel + proportional_term_flywheel - derivative_term_flywheel
-        # else:
-            # output_alpha = 1 * 10 # CHANGEDI
-            # output_alpha = clamp(output_alpha * self.delta_time, 1, 0)
+        if flywheel_recovery_mode:
+            target_flywheel_output = self.integral_term_flywheel + proportional_term_flywheel - derivative_term_flywheel
+        else:
+            output_alpha = 1 * 10 # CHANGEDI
+            output_alpha = clamp(output_alpha * self.delta_time, 1, 0)
 
-            # self.average_target_flywheel_output = self.average_target_flywheel_output * (1-output_alpha) + (self.integral_term_flywheel + proportional_term_flywheel - derivative_term_flywheel) * output_alpha  
+            self.average_target_flywheel_output = self.average_target_flywheel_output * (1-output_alpha) + (self.integral_term_flywheel + proportional_term_flywheel - derivative_term_flywheel) * output_alpha  
         
-            # target_flywheel_output = self.average_target_flywheel_output
-        target_flywheel_output = (self.integral_term_flywheel + proportional_term_flywheel - derivative_term_flywheel)
+            target_flywheel_output = self.average_target_flywheel_output
+        
         if self.flywheel_speed == 0:
             target_flywheel_output = 0
 
@@ -1681,20 +1702,28 @@ class Robot:
         
         # turret_motor.spin(FORWARD, turret_theta_vel, PERCENT)
         # return
-        
-        # if not self.turret_initialized:
-        #     turret_motor.spin(FORWARD, 10, PERCENT)
-        #     return
+        print("turret_initialized", self.turret_initialized)
+        if not self.turret_initialized:
+            turret_motor.spin(FORWARD, 50, PERCENT)
+            return
 
-        turret_theta = closest_angle(self.target_state["turret_theta"])
-        # Move the turret to the target orientation
-        if self["auto_aim"]:
-            turret_theta = closest_angle(self.target_state["theta"] - self["theta"])
-            
-        if abs(turret_theta) > self.turret_theta_range / 2:
-            turret_theta = self.turret_theta_range / 2 * sign(turret_theta)
+        turret_theta = (self.target_state["turret_theta"])
         
-        turret_motor.spin_to_position(self.compute_angle_to_turret_ticks(turret_theta), RotationUnits.DEG, 60, PERCENT)
+        # since the turret centered position is the turret when it is centered, if we want the turret to go to its 0 position (all the way to the right), it would be set to 81.6 degrees)
+        turret_theta = self.turret_centered_position - turret_theta
+        print("turret_theta 1", turret_theta)
+        # Move the turret to the target orientation
+        # if self["auto_aim"]:
+        #     turret_theta = closest_angle(self.target_state["theta"] - self["theta"])
+        turret_theta = clamp(turret_theta, self.turret_far_position, 2) 
+        print("turret_theta 2", turret_theta)
+
+        slow_down_distance = 7 # degrees
+        min_turret_speed = 20 # percent
+
+        turret_speed = (100 - min_turret_speed) / slow_down_distance * clamp(abs(self.compute_turret_ticks_to_angle(turret_motor.position(DEGREES)) - turret_theta), slow_down_distance, 0) + min_turret_speed
+
+        turret_motor.spin_to_position(-self.compute_angle_to_turret_ticks(turret_theta), RotationUnits.DEG, turret_speed, PERCENT)
 
     def intake_update(self):
         # If we have auto_intake enbaled then use the camera and try to look for the disc signatures
@@ -1879,10 +1908,6 @@ class Robot:
             
             if "slow_down_distance" not in step:
                 step["slow_down_distance"] = self.compute_slow_down_distance_for_min_velocity(step["min_velocity"])
-            
-            if "shoot_at_theta" in step:
-                step["theta"] = step["shoot_at_theta"] - sign(step["shoot_at_theta"]) * (self.turret_theta_range / 2) * 1
-                step["turret_theta"] = step["shoot_at_theta"] - step["theta"]
 
         try:
 
@@ -2236,8 +2261,7 @@ class Robot:
                 
                 if key == "theta" and self.target_state[key] != None:
                     self.target_state[key] = _state[key] % 360        
-       
-                
+                        
         # This fucntion updates any constants that are not targets
         self.update_constants(_state)
 
@@ -2446,8 +2470,10 @@ def driver_control():
 
         new_intake = clamp(controller_2.buttonL1.pressing() * 100 - controller_2.buttonR1.pressing() * 100 + controller_1.buttonLeft.pressing() * 100, 100, -100)
         
-        # turret_theta = r.target_state["turret_theta"] + controller_1.axis2.position() * 0.005
-        turret_theta = closest_angle(-r["theta"])
+        turret_theta = r.target_state["turret_theta"] + controller_1.axis2.position() * 0.005
+        # turret_theta = closest_angle(-r["theta"])
+
+
 
         #endregion
         
@@ -2514,20 +2540,32 @@ def driver_control():
 
         #region Aimbot
 
-        if controller_1.buttonUp.pressing() and r.using_gps and gps.quality() >= 100:
-            new_theta = None
+        # if controller_1.buttonUp.pressing() and r.using_gps and gps.quality() >= 100:
+        if controller_1.buttonUp.pressing():
+            r.set_target_state({
+                "turret_theta" : -30,
+            })
+
+            # new_theta = None
             
-            # If the robot is closer to one goal or the other 
-            goal = r.red_goal if r.x_from_gps + r.y_from_gps > 0 else r.blue_goal
-            angle = closest_angle(get_angle_to_object((r.x_from_gps, r.y_from_gps), (r.target_goal.x_pos, r.target_goal.y_pos)) - r.initial_theta_field)
+            # # If the robot is closer to one goal or the other 
+            # goal = r.red_goal if r.x_from_gps + r.y_from_gps > 0 else r.blue_goal
+
+            #     # In order to get the angle to an object take the atan2 of the d_x, d_y, then subtract the theta offset to convert it back to the robots local coordinate frame
+            # angle = (get_angle_to_object((r.x_from_gps, r.y_from_gps), (r.target_goal.x_pos, r.target_goal.y_pos)) - r.initial_theta_field)
             
-            print("going to angle", angle)
-            r.set_target_state(
-                {
-                    # In order to get the angle to an object take the atan2 of the d_x, d_y, then subtract the theta offset to convert it back to the robots local coordinate frame
-                    "theta" : angle,
-                }
-            )
+            # # print("our position", r.x_from_gps, r.y_from_gps, "goal position", r.target_goal.x_pos, r.target_goal.y_pos, "angle", angle + r.initial_theta_field)
+            # angle = closest_angle(angle)
+            # print("robot angle", angle)
+            
+            # r.set_target_state(
+            #     {
+            #         "theta" : angle,
+            #         "turret_theta" : (angle - r.theta),
+            #     }
+            # )
+            # wait(0.1, SECONDS)
+
         
         ### CAMERA AIMBOT
         # If the driver is pressing the left button, then turn on aimbot
@@ -3666,8 +3704,8 @@ def output_data():
     global serial_output_delay
     serial_output_delay = 0.2
 
-    print(brain.timer.value(), r.x_from_gps, r.y_from_gps, r.theta, r.theta_field, closest_angle(get_angle_to_object((r.x_from_gps, r.y_from_gps), (r.target_goal.x_pos, r.target_goal.y_pos)) - r.initial_theta_field), r.initial_theta_field)
-
+    # print(brain.timer.value(), r.x_from_gps, r.y_from_gps, r.theta, r.theta_field, closest_angle(get_angle_to_object((r.x_from_gps, r.y_from_gps), (r.target_goal.x_pos, r.target_goal.y_pos)) - r.initial_theta_field), r.initial_theta_field)
+    # print(brain.timer.value(), r.flywheel_speed, r.flywheel_kP, r.flywheel_motor_average_output)
     # print(brain.timer.value(), r.theta, r["turret_theta"], r.compute_turret_ticks_to_angle(turret_motor.position(DEGREES)))
     # print(brain.timer.value(), flywheel_motor.velocity(PERCENT), r.flywheel_speed)
     
@@ -3763,7 +3801,7 @@ def see_how_long_it_takes_for_flywheel_to_get_converge(position):
             r.flywheel_kP, r.flywheel_kI, r.flywheel_kD, r.flywheel_kF = position
 
 
-    flywheel_target_speed = 20
+    flywheel_target_speed = 50
     max_time_until_convergence = 9
 
     reset_flywheel_during_tuning()
@@ -3775,58 +3813,70 @@ def see_how_long_it_takes_for_flywheel_to_get_converge(position):
         "flywheel_speed" : flywheel_target_speed
     })
     while r.flywheel_instantaneous_speed < 1:
-        wait(0.001, SECONDS)
+        r.set_target_state({
+            "flywheel_speed" : flywheel_target_speed
+        })
+        wait(0.01, SECONDS)
     
     start_time = brain.timer.value()
 
-    previous_speeds = CircularArray(100)
+    previous_speeds_1 = CircularArray(20)
 
-    stdev = std(previous_speeds.arr)
-    average = sum(previous_speeds.arr) / len(previous_speeds.arr)
+    stdev = std(previous_speeds_1.arr)
+    average = 0
     accel = (r.state["flywheel_instantaneous_speed"] - r.previous_state["flywheel_instantaneous_speed"]) / r.delta_time
     # curvature = (delta_time * (r.previous_state["flywheel_speed"] - r.state["flywheel_speed"]))
 
     delta_time = 0.01
     # Wait for the flywheel to get to the target s;speed
-    while r.flywheel_instantaneous_speed < flywheel_target_speed or abs(average - r.flywheel_speed) > 1:
+    while r.flywheel_instantaneous_speed < flywheel_target_speed or abs(average - r.flywheel_speed) > 2:
+        print("Average:\t", average, "Std:\t", stdev, "Accel:\t", accel)
         # If we are taking a long time to converge, then increment kP 
         if (brain.timer.value()-start_time > max_time_until_convergence):
             break
+        previous_speeds_1.append(r.flywheel_instantaneous_speed)
         
         accel = (r.state["flywheel_instantaneous_speed"] - r.previous_state["flywheel_instantaneous_speed"]) / r.delta_time
-        stdev = std(previous_speeds.arr)
-        average = sum(previous_speeds.arr) / len(previous_speeds.arr)
+        stdev = std(previous_speeds_1.arr)
+        average = sum(previous_speeds_1.arr) / len(previous_speeds_1.arr)
         # print("Average:\t", average, "Std:\t", stdev, "Accel:\t", accel)
 
-        previous_speeds.append(r.flywheel_instantaneous_speed)
         
         wait(delta_time, SECONDS)
 
     time_until_hit = brain.timer.value()
+    copy_of_previous_speeds = previous_speeds_1.arr.copy()
     
-    print("before ", previous_speeds.arr)
-    [previous_speeds.pop() for b in range(round(previous_speeds.length * 0.8))]
-    print("after ", previous_speeds.arr)
+    del previous_speeds_1
+    # [previous_speeds.pop_oldest() for b in range(round(previous_speeds.length * 0.8))]
+    previous_speeds_1 = CircularArray(150)
+    [previous_speeds_1.append(b) for b in copy_of_previous_speeds]
     
-    raise NameError("Ayyyoo matt you still need to test this out")
+    previous_speeds_2 = CircularArray(20)
+    average_2 = -100
+    
     # USE CURIVATURE 
-    while abs(average - r.flywheel_speed) > 0.1 or stdev > 0.8:
-        # print("Average:\t", average, "Std:\t", stdev, "Accel:\t", accel)
+    while abs(average - r.flywheel_speed) > 0.1 or abs(average_2 - r.flywheel_speed) > 0.5 or stdev > 2.5:
+        print("Average:\t", average, average_2, "Std:\t", stdev, "Accel:\t", accel)
         # If we are taking a long time to converge, then increment kP 
         if (brain.timer.value()-start_time > max_time_until_convergence):
             break
-        stdev = std(previous_speeds.arr)
-        average = sum(previous_speeds.arr) / len(previous_speeds.arr)
+        previous_speeds_1.append(r.flywheel_instantaneous_speed)
+        previous_speeds_2.append(r.flywheel_instantaneous_speed)
+        stdev = std(previous_speeds_1.arr)
+        average = sum(previous_speeds_1.arr) / len(previous_speeds_1.arr)
+        average_2 = sum(previous_speeds_2.arr) / len(previous_speeds_2.arr)
         accel = (r.state["flywheel_instantaneous_speed"] - r.previous_state["flywheel_instantaneous_speed"]) / r.delta_time
-        
-        previous_speeds.append(r.flywheel_instantaneous_speed)
         wait(0.01, SECONDS)
 
     time_until_converge = brain.timer.value()
     delta_time = (time_until_converge - start_time)
 
     if delta_time > max_time_until_convergence:
-        return delta_time + sqrt(abs(average - r.flywheel_speed)) + sqrt(stdev)
+        score = delta_time + sqrt(abs(average - r.flywheel_speed)) + sqrt(stdev) 
+        reset_flywheel_during_tuning()
+        print("It took ", delta_time, " seconds to hit the target speed!", "score is: ", score)
+        return score
     print("It took ", delta_time, " seconds to hit the target speed!")
 
     reset_flywheel_during_tuning()
@@ -3942,12 +3992,34 @@ def tune_flywheel(initial_pos):
 
 # Output one pass of the data to init the serial_output_delay
 output_data()
-initial_pos = (0.6, 0.2, 0.11)
-initial_pos = [0.2588518, 0.1403032, 0.0950996]
-initial_pos = [0.217002, 0.1525032, 0.09129846]
-initial_pos = [0.1885019, 0.146754, 0.1340479]
+
+competition = Competition(driver_control, autonomous)
+
+# initial_pos = (0.6, 0.2, 0.11)
+# initial_pos = [0.2588518, 0.1403032, 0.0950996]
+# initial_pos = [0.217002, 0.1525032, 0.09129846]
+# initial_pos = [0.1885019, 0.146754, 0.1340479]
+# initial_pos = [0.3109977, 0.2244707, 0.2310476]
+# initial_pos = [0.6, 0.0191, 0.105]
+
+# It took  2.491005  seconds to hit the target speed!
+#         Grad     [4.67495, -1.539993, -0.7650375]
+#         D_R      [0.09349899, -0.03079987, -0.01530075]
+#         R:       [0.485001, 0.03280014, 0.1370003]
+
+# It took  2.365997  seconds to hit the target speed!
+#         Grad     [1.075001, 0.3549862, -0.83498]
+#         D_R      [0.02150002, 0.007099723, -0.0166996]
+#         R:       [0.5785, 0.002000277, 0.1216996]
+
+#         Grad     [0.1545048, 4.342556, -6.592007]
+#         D_R      [0.003090096, 0.08685112, -0.1318401]
+#         R:       [1.447774, 0, 0.1318401]
+
 # print(see_how_long_it_takes_for_flywheel_to_get_converge(initial_pos))
-tune_flywheel(initial_pos)
+
+# tune_flywheel(initial_pos)
+
 # grads = []R:       [0.1827017, 0.1534541, 0.1499479]
 # for i in range(5):
 #     grads.append(compute_gradient_of_flywheel(initial_pos))
@@ -3961,33 +4033,12 @@ tune_flywheel(initial_pos)
 # print(after_5)
 # print(after_10)
 # print(grads)
-raise
-guess_position = [(np.random.rand() - 0.5) * 10 ,(np.random.rand() - 0.5) * 10, (np.random.rand() - 0.5) * 10]
-grad = compute_gradient(f, guess_position)
-max_epsilon = 0.1
-max_attempts = 100
-epsilon = max_epsilon
-attempts = 0
-gradient_ascent_or_descend_constant = 1
-positions = []
-while attempts < max_attempts:
-    noise = Vector([np.random.normal() for _ in range(len(guess_position))])
-    delta_position = Vector(grad) * epsilon + noise * epsilon * (max_attempts - attempts) / max_attempts * 5
-    # print("grad is", grad)
-    # print("delta position is", delta_position)
-    guess_position = Vector(guess_position) + delta_position * gradient_ascent_or_descend_constant
-    # print("position is", guess_position)
-    grad = compute_gradient(f, guess_position)
-    positions.append(guess_position)
-    attempts += 1
-    epsilon = max_epsilon  
-print("it took ", attempts, "attempts to find the minimum, final position is", guess_position, "with height of ", f(guess_position))
 
 #region TODO LIST
 # ! PRIORITY
 
 # TODO: test passing theta if it goes to the next state
-
+# TODO: smooth the movemnet of the robot
 # TODO: test slow down speed and tolerance variables
 
 # TODO: Test pulsing feature
@@ -3997,16 +4048,7 @@ print("it took ", attempts, "attempts to find the minimum, final position is", g
 # TODO: apply fiter for encoders values so theyre cleaner
 # TODO: Implement fast autonomous
 
-# TODO: Make all pid controllers be based on delta time
-# TODO: Make loop sleep time 0 AND then retune EVERYTHING
-
 # TODO: Use accel/encoders to figure out when the robot is stopped?!?!?
-
-# TODO: For competition, be sure to turn on HOLD mode
-
-# TODO: Add a "neutral" team color, also make sure that the auto orientate towards high goal worksi n a regular match
-
-# TODO: For the aimbot, make it so that if we are on a specific team, the robot won't accidentally try to shoot at it
 
 # TODO: Test removing the derivative term from the flywheel
 
