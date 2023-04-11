@@ -76,8 +76,7 @@ turret_motor = Motor(Ports.PORT14, GearSetting.RATIO_36_1, False)
 
 roller_and_intake_motor_1 = Motor(Ports.PORT4, GearSetting.RATIO_36_1, False)
 roller_and_intake_motor_2 = Motor(Ports.PORT5, GearSetting.RATIO_36_1, False)
-roller_and_intake_motor = MotorGroup(
-    roller_and_intake_motor_1, roller_and_intake_motor_2)
+roller_and_intake_motor = MotorGroup(roller_and_intake_motor_1, roller_and_intake_motor_2)
 
 roller_optical = Optical(Ports.PORT6)
 
@@ -894,7 +893,7 @@ class Robot:
     '''
     This is the big-boy robot class, this is the class that controls the robot, there is a lot of stuff here
     '''
-
+    initialized = False
     #region Variables relating to orientation/positions/etc
     total_theta = 0
     initial_theta_field = 0
@@ -949,11 +948,11 @@ class Robot:
     #endregion
 
     #region Flywheel Variables    
-    turret_initial_position = 0
+    turret_initial_angle = 0
 
-    turret_centered_position = 90
+    turret_centered_angle = 39
 
-    turret_far_position = 140
+    turret_far_angle = 60
     
     # Set the offset for the flywheel from the center of the robot
     flywheel_offset_x = 0   
@@ -1029,6 +1028,8 @@ class Robot:
 
     turret_theta_range = 40
 
+    turret_limit_switch_timer = Timer()
+    
     max_turret_torque = 0
     #endregion
     
@@ -1130,7 +1131,7 @@ class Robot:
 
         "auto_aim" : False,
         "auto_orientate" : False,
-        "turret_theta" : turret_centered_position,
+        "turret_theta" : turret_centered_angle,
     }
 
     target_state = {
@@ -1227,6 +1228,8 @@ class Robot:
         Thread(self.update_loop)
 
         self.flywheel_recovery_timer.reset()
+        
+        self.initialized = True
 
     #region UPDATE FUNCTIONS
     def update_loop(self):
@@ -1448,19 +1451,21 @@ class Robot:
         elif self.team_color == "red":
             self.target_goal = self.red_goal
         
-
         self.turret_torque = turret_motor.torque()
         self.state["turret_torque"] = self.turret_torque
 
+        limit_switch_triggered = False
+        if not self.turret_initialized and turret_limit_switch.value() == 1:
+            self.turret_limit_switch_timer.reset()
+
         # If the turret is not initialized and we clicked the limit switch then set that to 0
-        if not self.turret_initialized and self.turret_torque > 0.8:
-            print(turret_motor.position()) # 81.6 degrees going to the right, -55.4 degrees going to the left
+        if not self.turret_initialized and self.turret_limit_switch_timer.value() > 1:
+            # print(turret_motor.position()) # 81.6 degrees going to the right, -55.4 degrees going to the left
             turret_motor.reset_position()
-            turret_motor.set_position(self.turret_centered_position, DEGREES)
             self.turret_initialized = True
 
         self.max_turret_torque = max(self.max_turret_torque, self.turret_torque) 
-        print((self.turret_torque - self.previous_state["turret_torque"]), self.previous_state["turret_torque"], self.turret_torque, self.max_turret_torque)
+        # print((self.turret_torque - self.previous_state["turret_torque"]), self.previous_state["turret_torque"], self.turret_torque, self.max_turret_torque)
         # Using the check_if_intersect function, see if the robot passes the line segment that makes up the target position
         line1 = [self.previous_state["x_pos"], self.previous_state["y_pos"], self.state["x_pos"], (self.state["y_pos"] )]
         line1b = [self.previous_state["x_pos"], self.previous_state["y_pos"], 2 * (self.state["x_pos"] - self.previous_state["x_pos"]), 2 * (self.state["y_pos"] - self.previous_state["y_pos"])]
@@ -1702,28 +1707,31 @@ class Robot:
         
         # turret_motor.spin(FORWARD, turret_theta_vel, PERCENT)
         # return
-        print("turret_initialized", self.turret_initialized)
+        # print("turret_initialized", self.turret_initialized)
+        
         if not self.turret_initialized:
-            turret_motor.spin(FORWARD, 50, PERCENT)
+            print("your mom is my dad", turret_motor.velocity(PERCENT))
+            turret_motor.spin(REVERSE, -50, PERCENT)
             return
 
-        turret_theta = (self.target_state["turret_theta"])
+        turret_target_theta = (self.target_state["turret_theta"])
         
         # since the turret centered position is the turret when it is centered, if we want the turret to go to its 0 position (all the way to the right), it would be set to 81.6 degrees)
-        turret_theta = self.turret_centered_position - turret_theta
-        print("turret_theta 1", turret_theta)
+        turret_target_theta = self.turret_centered_angle - turret_target_theta
+        print("turret_theta 1", turret_target_theta)
         # Move the turret to the target orientation
         # if self["auto_aim"]:
         #     turret_theta = closest_angle(self.target_state["theta"] - self["theta"])
-        turret_theta = clamp(turret_theta, self.turret_far_position, 2) 
-        print("turret_theta 2", turret_theta)
+        turret_target_theta = clamp(turret_target_theta, self.turret_far_angle, 2) 
+        print("turret_theta 2", turret_target_theta)
 
-        slow_down_distance = 7 # degrees
+        slow_down_distance = 5 # degrees
         min_turret_speed = 20 # percent
+        max_speed = 100
 
-        turret_speed = (100 - min_turret_speed) / slow_down_distance * clamp(abs(self.compute_turret_ticks_to_angle(turret_motor.position(DEGREES)) - turret_theta), slow_down_distance, 0) + min_turret_speed
+        turret_speed = ((max_speed - min_turret_speed) / slow_down_distance * clamp(abs(self.compute_turret_ticks_to_angle(turret_motor.position(DEGREES)) - turret_target_theta), slow_down_distance, 0) + min_turret_speed) * max_speed / 100
 
-        turret_motor.spin_to_position(-self.compute_angle_to_turret_ticks(turret_theta), RotationUnits.DEG, turret_speed, PERCENT)
+        turret_motor.spin_to_position(-self.compute_angle_to_turret_ticks(turret_target_theta), RotationUnits.DEG, turret_speed, PERCENT)
 
     def intake_update(self):
         # If we have auto_intake enbaled then use the camera and try to look for the disc signatures
@@ -2356,10 +2364,16 @@ class Robot:
 
 ######## COMPETITION FUNCTIONS ### COMPETITION FUNCTIONS ### COMPETITION FUNCTIONS ### COMPETITION FUNCTIONS ###
 def autonomous():
+    if not r.initialized:
+        r.init()
     r.run_autonomous()
     r.stop_moving()
 
 def driver_control():
+    
+    # Initialize the robot
+    if not r.initialized:
+        r.init()
 
     #region Timers
     global serial_output_delay
@@ -3609,7 +3623,7 @@ wait(30, MSEC)
 
 r.set_team("neutral")
 init()
-r.init()
+# r.init()
 
 r.set_autonomous_procedure(turret_test)
 # r.run_autonomous()
