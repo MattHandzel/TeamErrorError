@@ -83,7 +83,10 @@ roller_optical = Optical(Ports.PORT6)
 indexer = Pneumatics(brain.three_wire_port.a)
 expansion = Pneumatics(brain.three_wire_port.b)
 
-flywheel_status_light = Led(brain.three_wire_port.h)
+right_expansion = Pneumatics(brain.three_wire_port.g)
+left_expansion = Pneumatics(brain.three_wire_port.h)
+
+# flywheel_status_light = Led(brain.three_wire_port.h)
 
 
 # Vision signatures (disc signatures if we want to autoamtically sense discs, blue and red signatures for the red ang blue goals)
@@ -446,7 +449,6 @@ def calibrate_gps():
     
     print("Stds are: ", std(initial_x_positions), std(initial_y_positions), std(initial_theta_positions))
 
-
 def init():
     '''
     This function will initialize every subsystem with constants that wont change throughout the competition,
@@ -497,7 +499,7 @@ def init():
         # gps.set_origin(190, 60, MM)
         gps.set_origin(180, 35, MM)
     else: 
-        gps.set_origin(150, 70, MM)
+        gps.set_origin(150 + 30, 70 - 80, MM)
 
     inertial.calibrate()
 
@@ -963,9 +965,9 @@ class Robot:
     #region Flywheel Variables    
     turret_initial_angle = 0
 
-    turret_centered_angle = 22 
+    turret_centered_angle = 28.75
 
-    turret_far_angle = 39
+    turret_far_angle = 43
     
     # Set the offset for the flywheel from the center of the robot
     flywheel_offset_x = 0   
@@ -995,7 +997,7 @@ class Robot:
 
     average_target_flywheel_output = 0
     
-    flywheel_angle_offset = 9.5
+    flywheel_angle_offset = 11
 
     target_goal = None 
 
@@ -1047,12 +1049,12 @@ class Robot:
     # }
     distance_speed_maps = {
         0: 0,
-        78: 49 + 0.25,
-        98 : 50 + 0.25,
-        152 : 52.75 + 0.25,
-        183 : 55 + 0.25,
-        267 : 64.5,
-        315 : 68,
+        78  + 10 : 49 + 0.25,
+        98  + 9 : 50 + 0.25,
+        152 + 8 : 52.75 + 0.25,
+        183 + 7 : 55 + 0.25,
+        267 + 6 : 64.5,
+        315 + 5 : 68,
     }
 
     # A map that maps the speed of the flywheel to what direction the turret needs to turn
@@ -1147,6 +1149,8 @@ class Robot:
 
         # expansion
         "launch_expansion" : False,
+        "launch_right_expansion" : False,
+        "launch_left_expansion" : False,
 
         # Commands
         "using_gps" : False,
@@ -1165,6 +1169,8 @@ class Robot:
         "auto_aim" : False,
         "auto_orientate" : False,
         "turret_theta" : 0,
+
+
     }
 
     target_state = {
@@ -1325,7 +1331,6 @@ class Robot:
         self.x_vel = self.delta_x_encoders_relative / self.delta_time
         self.y_vel = self.delta_y_encoders_relative / self.delta_time
 
-
         # Velocity of robot from gps perspective
         x_from_gps = 0
         y_from_gps = 0
@@ -1338,6 +1343,17 @@ class Robot:
         x_vel_from_gps = None # 
         y_vel_from_gps = None
 
+        print("using_gps", self.state["using_gps"])
+
+        self.x_encoders_relative += self.delta_x_encoders_relative
+        self.y_encoders_relative += self.delta_y_encoders_relative
+
+        # Rotate the delta_x from the encoders to be relative to the field instead of relative to the robot
+        self.delta_x_encoders_field, self.delta_y_encoders_field = rotate_vector_2d(self.delta_x_encoders_relative, self.delta_y_encoders_relative, -self.theta_field  * DEG_TO_RAD)
+        
+        self.x_encoders_field += self.delta_x_encoders_field
+        self.y_encoders_field += self.delta_y_encoders_field
+    
         # If the gps is being used and not being obstructed
         if self.using_gps and gps.quality() >= 100: 
             
@@ -1373,66 +1389,43 @@ class Robot:
             # y_from_gps -= y_offset
             # print("x_from_gps, y_from_gps", x_from_gps, y_from_gps)
 
-            # print("Position from gps is", x_from_gps, y_from_gps, theta_from_gps)
-
             # self.field_theta = self.field_theta * 0.9 + 0.1 * gps.heading()
-            # print("We have moved x_enc, y_enc", delta_x_from_encoders, delta_y_from_encoders, "from gps", (x_from_gps - self.x_pos), (y_from_gps - self.y_pos))
-        elif self.using_gps:
+
+            self.x_pos = self.x_from_gps
+            self.y_pos = self.y_from_gps
+                        
+            gps_alpha = 1
+            gps_alpha = clamp(gps_alpha * self.delta_time, 1, 0)
+            
+            self.theta_field = theta_field * (1-gps_alpha) + self.theta_field * gps_alpha
+            
+            self.delta_x_gps_relative, self.delta_y_gps_relative = rotate_vector_2d(self.delta_x_gps_field, self.delta_y_gps_field, self.initial_theta_field  * DEG_TO_RAD) 
+            
+            self.x_gps_relative, self.y_gps_relative = self.convert_field_to_local_coordinates(self.x_from_gps, self.y_from_gps)
+
+            gps_encoder_blend_alpha = 0
+            gps_encoder_blend_alpha = clamp(gps_encoder_blend_alpha * self.delta_time, 1, 0)
+            
+            velocity_alpha = 0.2
+            if x_vel_from_gps is not None:
+                self.x_vel = self.x_vel * (1 - velocity_alpha) + x_vel_from_gps * velocity_alpha
+                self.y_vet = self.y_vel * (1 - velocity_alpha) + y_vel_from_gps * velocity_alpha
+
+        else:
             # If we are using the gps but it is obstructed, then we want to use the encoders
             
             x_from_gps = self.x_from_gps
             y_from_gps = self.y_from_gps
             theta_field = self.theta_field
 
-        gps_encoder_blend_alpha = 0
-        gps_encoder_blend_alpha = clamp(gps_encoder_blend_alpha * self.delta_time, 1, 0)
-
-        # If we have not moved (from the encoders point of view), and the gps is not changing that much, then use the rolling average from the gps
-        # If gps is enabled then the low and high pass filter will make the x and y position more stable, if gps is not enabled then the formula won't use gps data (alpha would equal 0)
-        self.x_pos += self.delta_x_encoders_relative * (1-gps_encoder_blend_alpha) + (self.delta_x_gps_field-self.x_pos) * gps_encoder_blend_alpha 
-        self.y_pos += self.delta_y_encoders_relative * (1-gps_encoder_blend_alpha) + (self.delta_y_gps_field-self.y_pos) * gps_encoder_blend_alpha
-        
-        gps_alpha = 1
-        gps_alpha = clamp(gps_alpha * self.delta_time, 1, 0)
-        
-        self.x_from_gps = self.x_from_gps * (1-gps_alpha) + x_from_gps * gps_alpha
-        self.y_from_gps = self.y_from_gps * (1-gps_alpha) + y_from_gps * gps_alpha
-
-        self.x_pos = self.x_from_gps
-        self.y_pos = self.y_from_gps
-
-        self.theta_field = theta_field * (1-gps_alpha) + self.theta_field * gps_alpha
-        
-        self.x_encoders_relative += self.delta_x_encoders_relative
-        self.y_encoders_relative += self.delta_y_encoders_relative
-
-        velocity_alpha = 0.2
-        if x_vel_from_gps is not None:
-            self.x_vel = self.x_vel * (1 - velocity_alpha) + x_vel_from_gps * velocity_alpha
-            self.y_vet = self.y_vel * (1 - velocity_alpha) + y_vel_from_gps * velocity_alpha
-
-        # Rotate the delta_x from the encoders to be relative to the field instead of relative to the robot
-        self.delta_x_encoders_field, self.delta_y_encoders_field = rotate_vector_2d(self.delta_x_encoders_relative, self.delta_y_encoders_relative, -self.theta_field  * DEG_TO_RAD)
-        
-        self.x_encoders_field += self.delta_x_encoders_field
-        self.y_encoders_field += self.delta_y_encoders_field
-    
-        self.delta_x_gps_relative, self.delta_y_gps_relative = rotate_vector_2d(self.delta_x_gps_field, self.delta_y_gps_field, self.initial_theta_field  * DEG_TO_RAD) 
-        
-        self.x_gps_relative, self.y_gps_relative = self.convert_field_to_local_coordinates(self.x_from_gps, self.y_from_gps)
+            # If we have not moved (from the encoders point of view), and the gps is not changing that much, then use the rolling average from the gps
+            # If gps is enabled then the low and high pass filter will make the x and y position more stable, if gps is not enabled then the formula won't use gps data (alpha would equal 0)
+            self.x_pos += self.delta_x_encoders_field
+            self.y_pos += self.delta_y_encoders_field
 
         ### KALMAN FILTER
-
         self.aimbot_trust = gps.quality()
 
-        # self.x_pos, self.y_pos = self.x_gps_relative, self.y_gps_relative
-        
-        # print(brain.timer.value(), self.delta_x_from_encoders, self.delta_y_from_encoders)
-        # encoders_gps_fusion_alpha = 0.1
-
-        # If we are close to our target position then say that we reached our target state (useful for autonomous mode)
-        # if ((abs(self.state["x_pos"] - self.target_state["x_pos"]) < self.position_tolerance and abs(self.state["y_pos"] - self.target_state["y_pos"]) < self.position_tolerance)         #     or (self.state["override_velocity_y"] != None or self.state["override_velocity_x"] != None)):
-        
         tolerance = self["tolerance"]
         target_state_theta_tolerance = 1.8
 
@@ -1743,8 +1736,8 @@ class Robot:
             x_pos_of_goal = self.target_goal.x_pos
             y_pos_of_goal = self.target_goal.y_pos
 
-            x_pos_of_robot = self.x_from_gps
-            y_pos_of_robot = self.y_from_gps
+            x_pos_of_robot = self.x_pos
+            y_pos_of_robot = self.y_pos
 
             # Forsee the position of the goals based on the current velocity of the robot
             if False:
@@ -1777,7 +1770,7 @@ class Robot:
         
         if not self.turret_initialized:
             # print("not intitialized turret update")
-            turret_motor.spin(REVERSE, -5, PERCENT)
+            turret_motor.spin(REVERSE, -30, PERCENT)
             return
 
         turret_target_theta = (self.target_state["turret_theta"])
@@ -1878,15 +1871,26 @@ class Robot:
             expansion.open()
         else:
             expansion.close()
+        
+        if self.target_state["launch_right_expansion"]:
+            right_expansion.open()
+        else:
+            right_expansion.close()
+
+        if self.target_state["launch_left_expansion"]:
+            left_expansion.open()
+        else:
+            left_expansion.close()
+
 
     def status_update(self):
         
-        # Indicate to the drivers that the flywheel is ready to be shot
-        if abs(flywheel_motor.velocity(PERCENT) - self.flywheel_speed) < 2: 
-            flywheel_status_light.on()
-        else:
-            flywheel_status_light.off()
-
+        # Indicate to the drivers that the fheel is ready to be shot
+        # if abs(flywheel_motor.velocity(PERCENT) - self.flywheel_speed) < 2: 
+        #     flywheel_status_light.on()
+        # else:
+        #     flywheel_status_light.off()
+        pass
     
     #endregion 
 
@@ -2359,7 +2363,9 @@ class Robot:
             "min_velocity",
             "tolerance",
             "slow_down_distance",
-            "aimbot",     
+            "aimbot",
+            "launch_right_expansion",
+            "launch_left_expansion",     
         ]
 
         for constant in constants:
@@ -2503,6 +2509,8 @@ def driver_control():
     
     #endregion
 
+    r.set_target_state({"using_gps" : True})
+
     previous_flywheel_speed = 0
 
     # Timer that allows us to keep track for how long we have been pressing the aimbot button for to make the robot move more as time goes on
@@ -2602,25 +2610,19 @@ def driver_control():
         #endregion
 
         #region Roller spin for specific distance
-        if controller_2.buttonLeft.pressing():
-            new_intake = None
-            r.set_target_state({
-                "roller_spin_for" : 0.5,
-                }
-            )
 
-        if controller_2.buttonRight.pressing():
-            new_intake = None
+        if controller_2.buttonA.pressing() and not previous_controller_states_2["buttonA"]:
             r.set_target_state({
-                "roller_spin_for" : 0.25,
-                }
-            )
+                "launch_right_expansion" : not r.target_state["launch_right_expansion"],
+            })
+
+        if controller_2.buttonY.pressing() and not previous_controller_states_2["buttonY"]:
+            r.set_target_state({
+                "launch_left_expansion" : not r.target_state["launch_left_expansion"],
+            })
         
         #endregion
-
         #region Aimbot
-
-        # if controller_1.buttonUp.pressing() and r.using_gps and gps.quality() >= 100:
 
         # if we hit the button toglge this thing
         if controller_1.buttonUp.pressing() and not previous_controller_1_states["buttonUp"]:
@@ -2628,6 +2630,7 @@ def driver_control():
                 "aimbot" : not r.target_state["aimbot"]
             })
             print("setting aimbot to", r.target_state["aimbot"])        
+        
         ### CAMERA AIMBOT
         # If the driver is pressing the left button, then turn on aimbot
         # if controller_1.buttonLeft.pressing():
@@ -2692,6 +2695,7 @@ def driver_control():
 
         #region Control expansion
         
+        # Controls the left expansion
         if controller_2.buttonUp.pressing(): # and expansion_timer.value() < (60 + 45 - 11):
             r.set_target_state({
                 "launch_expansion" : True
@@ -2701,6 +2705,8 @@ def driver_control():
                 "launch_expansion" : False
             })
             expansion.close()
+
+        # Controls the right expansion
 
         if controller_1.buttonR1.pressing():
             r.set_target_state({
@@ -2798,7 +2804,7 @@ shoot_discs_auto_program = [
     },
 ]
 
-match_auto_two_squares = [
+old_match_auto_two_squares = [
     {
         "override_velocity_theta": None,
         "drone_mode": True,
@@ -2875,6 +2881,119 @@ match_auto_two_squares = [
         "theta": 0,
         "intake_speed": 0,
         "flywheel_speed" : 61.4,
+        "message": "This is state #3!",
+        "x_pos": 18,
+        "y_pos": 27  - 13.00,
+    },
+    {
+        "launch_expansion": False,
+        "theta": 135,
+        "intake_speed": 0,
+        "message": "This is state #4!",
+        "x_pos": 18,
+        "y_pos": 27  - 13.00,
+    },
+    {
+        "launch_expansion": False,
+        "intake_speed": 100,
+        "message": "This is state #5!",
+        "x_pos": -11 + -70.0 + 43.00,
+        "y_pos": 11 + 120  - 15.00 - 43.00,
+    },
+    {
+        "theta" : 35,
+    },
+    {
+        "wait" : 0.5,
+    },
+    {
+        "shoot_disc" : 1,
+        "wait" : 1.75,
+    },
+    {
+        "shoot_disc" : 1,
+    },
+    {
+        "message" : "DONE WITH AUTONOMOUS"
+    }
+]
+
+match_auto_two_squares = [
+    {
+        "override_velocity_theta": None,
+        "drone_mode": True,
+        "override_velocity_x": None,
+        "override_velocity_y": None,
+        "set_x": 0,
+        "set_y": 0,
+        "set_theta": 0,
+        "autonomous_speed" : 65,
+        "intake_speed": 0,
+        "aimbot": True,
+        "using_gps" : False,
+    },
+    {
+        "launch_expansion": False,
+        "theta": 360.0,
+        "message": "This is state #2!",
+        "intake_speed": 0,
+        "x_pos" : 54,
+        "y_pos" : 0,
+        "min_velocity" : 30,
+    },
+    {
+        "launch_expansion": False,
+        "theta": 360.0,
+        "intake_speed": 0,
+        "message": "This is state #2!",
+        "x_pos" : 54,
+        "y_pos" : -7  - 12.25,
+        "timeout" : 1.75,
+    },
+    {
+        "roller_spin_for" : 0.35,
+        "timeout" : 2,
+    },
+    {
+        "theta": 0,
+        "intake_speed": 0,
+        "message": "This is state #4!",
+        "x_pos": 54,
+        "y_pos": 21  - 13.00,
+    },
+    {
+        "autonomous_speed" : 70,
+        "intake_speed": 0,
+        "message": "This is state #4!",
+        "x_pos": 54,
+        "y_pos": 21  - 13.00 - 0.5,
+    },
+    {
+        "autonomous_speed" : 65,
+        'wait' : 0.75,
+    },
+    {
+        "shoot_disc" : 1,
+        "wait" : 2,
+    },
+    
+    {
+        "shoot_disc" : 1,
+    },
+    {
+        "autonomous_speed" : 80,
+        "launch_expansion": False,
+        "theta": 0,
+        "intake_speed": 0,
+        "message": "This is state #2!",
+        "x_pos": 52.0,
+        "y_pos": 21.0  - 13.00,
+    },
+
+    {
+        "launch_expansion": False,
+        "theta": 0,
+        "intake_speed": 0,
         "message": "This is state #3!",
         "x_pos": 18,
         "y_pos": 27  - 13.00,
@@ -3672,7 +3791,7 @@ r.set_team("neutral")
 init()
 r.init()
 
-r.set_autonomous_procedure(turret_test)
+r.set_autonomous_procedure(match_auto_two_squares)
 # r.run_autonomous()
 
 #region GUI
@@ -3690,7 +3809,7 @@ gui.add_page([
     # Changes the roller mode from manual to auto
     Switch(["Auto Roller", "Manual Roller"], 120, 80, 120, 40, [Color(0x88AA88), Color(0xAA8888)], [r.set_target_state] * 2, [{"auto_roller" : True}, {"auto_roller" : False}],),
     Button("Reset θ", 0, 200, 120, 40, (0xAAAAFA), reset_robot_theta), 
-    Switch(["GPS", "No GPS"], 120, 160, 120, 40, [Color(0x88AA88), Color(0xAA8888)], [r.set_target_state] * 2, [{"use_gps" : True}, {"use_gps" : False}]),
+    Switch(["GPS", "No GPS"], 120, 160, 120, 40, [Color(0x88AA88), Color(0xAA8888)], [r.set_target_state] * 2, [{"using_gps" : True}, {"using_gps" : False}]),
     Switch(["Expansion On", "Expansion Off"], 120, 200, 120, 40, [Color(0x88AA88), Color(0xAA8888)], [r.set_target_state] * 2, [{"launch_expansion" : True}, {"launch_expansion" : False}]),
 
     # Save the path by printing the representation (in the future it can be saved to sd car), 
@@ -3730,7 +3849,7 @@ gui.add_page([
     Button("Shoot Disc", 0, 120, 120, 40, (0x8888AA), lambda: r.set_target_state({"shoot_disc" : 1,}),),
     
     Button("Reset Theta", 0, 160, 120, 40, (0xAAAAFA), reset_robot_theta), 
-    Switch(["GPS", "No GPS"], 120, 160, 120, 40, [Color(0x88AA88), Color(0xAA8888)], [r.set_target_state] * 2, [{"use_gps" : True}, {"use_gps" : False}]),
+    Switch(["GPS", "No GPS"], 120, 160, 120, 40, [Color(0x88AA88), Color(0xAA8888)], [r.set_target_state] * 2, [{"using_gps" : True}, {"using_gps" : False}]),
    
     Text("", 0, 200, 120, 40, (Color.BLACK), lambda: f("State #", len(r.path)),), 
     
@@ -3778,7 +3897,7 @@ def output_data():
     
     d_x, d_y = r.x_from_gps - r.initial_x_field, r.y_from_gps - r.initial_y_field
 
-    print(d_x, d_y, sqrt(d_x**2 + d_y**2))
+    print(r.x_pos, r.y_pos, d_x, d_y, sqrt(d_x**2 + d_y**2))
 
     # print(brain.timer.value(), r.x_from_gps, r.y_from_gps, r.theta, r.theta_field, closest_angle(get_angle_to_object((r.x_from_gps, r.y_from_gps), (r.target_goal.x_pos, r.target_goal.y_pos)) - r.initial_theta_field), r.initial_theta_field)
     # print(brain.timer.value(), r.flywheel_speed, r.flywheel_kP, r.flywheel_motor_average_output)
