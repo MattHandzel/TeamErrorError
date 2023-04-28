@@ -1343,8 +1343,6 @@ class Robot:
         x_vel_from_gps = None # 
         y_vel_from_gps = None
 
-        print("using_gps", self.state["using_gps"])
-
         self.x_encoders_relative += self.delta_x_encoders_relative
         self.y_encoders_relative += self.delta_y_encoders_relative
 
@@ -1353,7 +1351,7 @@ class Robot:
         
         self.x_encoders_field += self.delta_x_encoders_field
         self.y_encoders_field += self.delta_y_encoders_field
-    
+
         # If the gps is being used and not being obstructed
         if self.using_gps and gps.quality() >= 100: 
             
@@ -1367,6 +1365,7 @@ class Robot:
 
             x_vel_from_gps = (x_from_gps - self.previous_x_gps_field) / self.delta_time
             y_vel_from_gps = (y_from_gps - self.previous_y_gps_field) / self.delta_time
+
 
             # x_from_gps, y_from_gps = rotate_vector_2d(x_from_gps, y_from_gps, self.gps_theta_on_robot * DEG_TO_RAD)
 
@@ -1391,8 +1390,10 @@ class Robot:
 
             # self.field_theta = self.field_theta * 0.9 + 0.1 * gps.heading()
 
-            self.x_pos = self.x_from_gps
-            self.y_pos = self.y_from_gps
+            self.x_pos = x_from_gps
+            self.y_pos = y_from_gps
+
+            # print(gps.quality(), self.using_gps, self.x_pos, self.y_pos, self.x_from_gps, self.y_from_gps)
                         
             gps_alpha = 1
             gps_alpha = clamp(gps_alpha * self.delta_time, 1, 0)
@@ -1414,8 +1415,6 @@ class Robot:
         else:
             # If we are using the gps but it is obstructed, then we want to use the encoders
             
-            x_from_gps = self.x_from_gps
-            y_from_gps = self.y_from_gps
             theta_field = self.theta_field
 
             # If we have not moved (from the encoders point of view), and the gps is not changing that much, then use the rolling average from the gps
@@ -1485,7 +1484,6 @@ class Robot:
 
         # if (not self.turret_initialized) and turret_limit_switch.value() == 1:
         #     self.turret_limit_switch_timer.reset()
-        # print("turret initialized" if self.turret_initialized else "not initialized")
         # If the turret is not initialized and we clicked the limit switch then set that to 0
         if (not self.turret_initialized) and (turret_limit_switch.value() == 0):
             turret_motor.set_position(0, DEGREES)
@@ -1507,7 +1505,7 @@ class Robot:
         # passed_target_rotation = (self.previous_state["theta"] < self.target_state["theta"] and self.theta > self.target_state["theta"]) or (self.previous_state["theta"] > self.target_state["theta"] and self.theta < self.target_state["theta"])
         passed_target_rotation = False
         self["flywheel_instantaneous_speed"] = flywheel_motor.velocity(PERCENT)
-        if (is_intersecting or is_close_enough) and (abs(self.theta - self.target_state["theta"]) < target_state_theta_tolerance or passed_target_rotation) and rollers_done and self.shoot_disc <= 0 and (turret_motor.is_done() or abs(self["turret_theta"] - self.target_state["turret_theta"]) < 0.5):
+        if (is_intersecting or is_close_enough) and (abs(self.theta - self.target_state["theta"]) < target_state_theta_tolerance or passed_target_rotation) and rollers_done and self.shoot_disc <= 0:
             self.target_reached = True
 
     def position_update(self):
@@ -2060,12 +2058,12 @@ class Robot:
     
     def compute_tolerance_for_min_velocity(self, _min_velocity):
         max_tolerance = 7
-        min_tolerance = 2
+        min_tolerance = 3.2
         return (max_tolerance - min_tolerance) * (_min_velocity / 100) + min_tolerance
 
     def compute_slow_down_distance_for_min_velocity(self, _min_velocity):
-        max_slow_down_distance = 20
-        min_slow_down_distance = 10
+        max_slow_down_distance = 15
+        min_slow_down_distance = 3.5
         return (max_slow_down_distance - min_slow_down_distance) * (_min_velocity / 100) + min_slow_down_distance
     
     def compute_distance_to_goal(self, goal):
@@ -2509,7 +2507,7 @@ def driver_control():
     
     #endregion
 
-    r.set_target_state({"using_gps" : True})
+    # r.set_target_state({"using_gps" : True})
 
     previous_flywheel_speed = 0
 
@@ -2533,10 +2531,13 @@ def driver_control():
         # Display data to the controllers
         if controller_output_timer.value() > 0.2:
             controller_1.screen.clear_row(3)
-            controller_1.screen.print(f("FLY:", round(r.flywheel_speed,1), round(r.theta, 1), r.turret_theta))
+            controller_1.screen.print(f("FW", round(r.flywheel_speed,1), ("AIMBOT" if r.target_state["aimbot"] else ""),))
+            
             controller_2.screen.clear_row(3)
-            controller_2.screen.print(f("FLY:", r.flywheel_speed, "ang:", round(r.theta)))
+            controller_2.screen.print(f("FW", round(r.flywheel_speed,1), ("AIMBOT" if r.target_state["aimbot"] else ""),))
+            
             controller_output_timer.reset()
+
         #endregion
         
         #region Drive robot variables
@@ -2927,9 +2928,9 @@ match_auto_two_squares = [
         "set_x": 0,
         "set_y": 0,
         "set_theta": 0,
-        "autonomous_speed" : 65,
+        "autonomous_speed" : 67,
         "intake_speed": 0,
-        "aimbot": True,
+        # "aimbot": True,
         "using_gps" : False,
     },
     {
@@ -2940,6 +2941,7 @@ match_auto_two_squares = [
         "x_pos" : 54,
         "y_pos" : 0,
         "min_velocity" : 30,
+        "flywheel_speed" : 63.25,
     },
     {
         "launch_expansion": False,
@@ -2955,33 +2957,36 @@ match_auto_two_squares = [
         "timeout" : 2,
     },
     {
-        "theta": 0,
+        "turret_theta" : 20,
         "intake_speed": 0,
         "message": "This is state #4!",
         "x_pos": 54,
         "y_pos": 21  - 13.00,
     },
     {
-        "autonomous_speed" : 70,
+        "autonomous_speed" : 60,
         "intake_speed": 0,
         "message": "This is state #4!",
         "x_pos": 54,
         "y_pos": 21  - 13.00 - 0.5,
+        "theta" : 10.2,
     },
     {
-        "autonomous_speed" : 65,
-        'wait' : 0.75,
+        "autonomous_speed" : 50,
+        'wait' : 1.5,
     },
     {
         "shoot_disc" : 1,
-        "wait" : 2,
+        "wait" : 3,
     },
-    
-    {
+    { 
         "shoot_disc" : 1,
     },
     {
-        "autonomous_speed" : 80,
+        "theta" : 0,
+    },
+    {
+        "autonomous_speed" : 70,
         "launch_expansion": False,
         "theta": 0,
         "intake_speed": 0,
@@ -2999,40 +3004,217 @@ match_auto_two_squares = [
         "y_pos": 27  - 13.00,
     },
     {
+        "x_pos" : 0,
+        "y_pos" : 0,
+        "set_x" : 0,
+        "set_y" : 0,
+    },
+    # {
+    #     "launch_expansion": False,
+    #     "theta": 135,
+    #     "intake_speed": 0,
+    #     "message": "This is state #4!",
+    #     "x_pos": 18,
+    #     "y_pos": 27  - 13.00,
+    #     "flywheel_speed" : 55.5,
+    # },
+    # {
+    #     "launch_expansion": False,
+    #     "intake_speed": 100,
+    #     "message": "This is state #5!",
+    #     "x_pos": -11 + -70.0 + 43.00,
+    #     "y_pos": 11 + 120  - 15.00 - 43.00,
+    # },
+    # {
+    #     "theta" : 25,
+    #     "turret_theta" : 5,
+    # },
+    # {
+    #     "wait" : 0.5,
+    # },
+    # {
+    #     "shoot_disc" : 1,
+    #     "wait" : 1.75,
+    # },
+    # {
+    #     "shoot_disc" : 1,
+    # },
+    # {
+    #     "message" : "DONE WITH AUTONOMOUS",
+    #     "turret_theta" : Robot.flywheel_angle_offset,
+    # }
+]
+
+CLOSE_match_auto_two_squares = [
+    {
+        "override_velocity_theta": None,
+        "drone_mode": True,
+        "override_velocity_x": None,
+        "override_velocity_y": None,
+        "set_x": 0,
+        "set_y": 0,
+        "set_theta": 0,
+        "autonomous_speed" : 67,
+        "intake_speed": 0,
+        # "aimbot": True,
+        "using_gps" : False,
+    },
+    {
         "launch_expansion": False,
-        "theta": 135,
+        "theta": 360.0,
+        "message": "This is state #2!",
+        "intake_speed": 0,
+        "x_pos" : -54,
+        "y_pos" : 0,
+        "min_velocity" : 30,
+        "flywheel_speed" : 65,
+    },
+    {
+        "launch_expansion": False,
+        "theta": -360.0,
+        "intake_speed": 0,
+        "message": "This is state #2!",
+        "x_pos" : -54,
+        "y_pos" : -7  - 12.25,
+        "timeout" : 1.75,
+    },
+    {
+        "roller_spin_for" : 0.35,
+        "timeout" : 2,
+    },
+    {
+        "turret_theta" : -20,
         "intake_speed": 0,
         "message": "This is state #4!",
-        "x_pos": 18,
+        "x_pos": -54,
+        "y_pos": 21  - 12.00,
+    },
+    {
+        "autonomous_speed" : 60,
+        "intake_speed": 0,
+        "message": "This is state #4!",
+        "x_pos": -54,
+        "y_pos": 21  - 12.00 - 0.5,
+        "theta" : -10,
+    },
+    {
+        "autonomous_speed" : 60,
+        'wait' : 0.75,
+    },
+    {
+        "shoot_disc" : 1,
+        "wait" : 2,
+    },
+    
+    {
+        "shoot_disc" : 1,
+    },
+    {
+        "theta" : 0,
+    },
+    {
+        "autonomous_speed" : 70,
+        "launch_expansion": False,
+        "theta": 0,
+        "intake_speed": 0,
+        "message": "This is state #2!",
+        "x_pos": -52.0,
+        "y_pos": 21.0  - 13.00,
+    },
+
+    {
+        "launch_expansion": False,
+        "theta": 0,
+        "intake_speed": 0,
+        "message": "This is state #3!",
+        "x_pos": -18,
         "y_pos": 27  - 13.00,
     },
     {
-        "launch_expansion": False,
-        "intake_speed": 100,
-        "message": "This is state #5!",
-        "x_pos": -11 + -70.0 + 43.00,
-        "y_pos": 11 + 120  - 15.00 - 43.00,
-    },
-    {
-        "theta" : 35,
-    },
-    {
-        "wait" : 0.5,
-    },
-    {
-        "shoot_disc" : 1,
-        "wait" : 1.75,
-    },
-    {
-        "shoot_disc" : 1,
-    },
-    {
-        "message" : "DONE WITH AUTONOMOUS"
+        "x_pos" : 0,
+        "y_pos" : 0,
+        "set_x" : 0,
+        "set_y" : 0,
     }
+    # {
+    #     "launch_expansion": False,
+    #     "theta": 135,
+    #     "intake_speed": 0,
+    #     "message": "This is state #4!",
+    #     "x_pos": 18,
+    #     "y_pos": 27  - 13.00,
+    #     "flywheel_speed" : 55.5,
+    # },
+    # {
+    #     "launch_expansion": False,
+    #     "intake_speed": 100,
+    #     "message": "This is state #5!",
+    #     "x_pos": -11 + -70.0 + 43.00,
+    #     "y_pos": 11 + 120  - 15.00 - 43.00,
+    # },
+    # {
+    #     "theta" : 25,
+    #     "turret_theta" : 5,
+    # },
+    # {
+    #     "wait" : 0.5,
+    # },
+    # {
+    #     "shoot_disc" : 1,
+    #     "wait" : 1.75,
+    # },
+    # {
+    #     "shoot_disc" : 1,
+    # },
+    # {
+    #     "message" : "DONE WITH AUTONOMOUS",
+    #     "turret_theta" : Robot.flywheel_angle_offset,
+    # }
 ]
+
 
 match_auto_rollers_only_easy = [
 
+]
+
+expansion_autonomous = [
+    {
+        "override_velocity_theta": None,
+        "drone_mode": True,
+        "override_velocity_x": None,
+        "override_velocity_y": None,
+        "set_x": 0,
+        "set_y": 0,
+        "set_theta": 0,
+        "autonomous_speed" : 80,
+        "intake_speed": 0,
+        # "aimbot": True,
+        "using_gps" : False,
+    },
+    {
+        "x_pos" : -70, 
+    },
+    {
+        "y_pos" : -50
+    },
+    {
+        "x_pos" : -70 + 15, 
+        "y_pos" : -50 + 15,
+    },
+    {
+        "theta" : 45,
+        "wait" : 3,
+    },
+    {
+        "launch_right_expansion" : True,
+    },
+    {
+        "wait" : 1,
+    },
+    {
+        "launch_left_expansion" : True,
+        "wait" : 1,
+    }
 ]
 
 match_auto_three_squares = [
@@ -3447,7 +3629,6 @@ skills_auto = [
     {
         "intake_speed" : 100,
         "theta" : 105,
-
     },
     {
         "shoot_disc" : 1,
@@ -3824,7 +4005,7 @@ gui.add_page([
     Button("Go To Debug", 360, 200, 120, 40, (0xAAAAAA), lambda: gui.set_page(1)),
 
     # Auto Selector
-    Switch(["3-Square", "2-Square", "SKILLS", "ShootDiscs", "Intake Forever", "Temp", "Test"], 0, 120, 120, 40, [0x33FF33, 0x33CC33, 0x33AA33, 0x339933, 0x337733, 0x335533,0x333333], lambda auto_mode: r.set_autonomous_procedure(auto_mode), [match_auto_three_squares, match_auto_two_squares, skills_auto, skills_auto, auto_intake_on_forever, skills_auto, auto_test]),
+    Switch(["3-Square", "2-Square", "SKILLS", "ShootDiscs", "Intake Forever", "Temp", "Test"], 0, 120, 120, 40, [0x33FF33, 0x33CC33, 0x33AA33, 0x339933, 0x337733, 0x335533,0x333333], lambda auto_mode: r.set_autonomous_procedure(auto_mode), [match_auto_three_squares, CLOSE_match_auto_two_squares, expansion_autonomous, skills_auto, auto_intake_on_forever, skills_auto, auto_test]),
     Button("Run auto", 0, 160, 120, 40, (0xAAAAAA), lambda: r.run_autonomous()),
     Switch(["2-Controller", "1-Controller"], 240, 160, 120, 80, [0xCCAAAA, 0xCCAACC], lambda value: set_debug_value(value), (False, True))
 ])
@@ -4185,7 +4366,6 @@ def tune_flywheel(initial_pos):
 
 # Output one pass of the data to init the serial_output_delay
 output_data()
-
 
 competition = Competition(driver_control, autonomous)
 
