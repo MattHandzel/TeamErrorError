@@ -24,10 +24,11 @@ I developed a custom toolchain for designing and executing autonomous paths.
 *   **Autonomous Recording & Replay:** The system supports a "Recording Mode" where driver movements are sampled and stored as a series of state-targets, allowing complex manual maneuvers to be replayed as autonomous routines. [`Main/src/main.py` (lines 2188-2202)](Main/src/main.py#L2188)
 *   **Intersection Geometry:** Uses line-segment intersection algorithms to determine when the robot has passed specific checkpoints. [`Main/src/main.py` (lines 1362-1372)](Main/src/main.py#L1362)
 
-### 4. Automated PID Tuning via Gradient Descent
-To optimize the flywheel PID constants ($k_P$, $k_I$, $k_D$), I developed a **Gradient Descent** algorithm.
-*   **Iterative Optimization:** Instead of manual tuning, the algorithm iterates over flywheel performance data to identify the optimal constants that minimize RPM error and recovery time.
-*   **Implementation:** The optimization logic is housed in [`Main/gradient_descent.py`](Main/gradient_descent.py).
+### 4. PID Optimization via Custom Gradient Descent
+To identify the optimal flywheel PID constants ($k_P$, $k_I$, $k_D$), I developed a **Gradient Descent** algorithm from scratch.
+*   **Methodology:** I implemented the optimization algorithm to process flywheel performance data and minimize RPM error. This allowed for a more mathematical approach to tuning than traditional trial-and-error.
+*   **Implementation:** [`Main/gradient_descent.py`](Main/gradient_descent.py) contains the from-scratch implementation of the Gradient Descent algorithm, including custom vector math and gradient calculation logic.
+*   **Production Constants:** The resulting optimized constants are implemented in the flywheel control loop in [`Main/src/main.py` (lines 1460-1462)](Main/src/main.py#L1460).
 
 ### 5. Physical Modeling & Simulation
 Before testing on hardware, I built mathematical models to predict robot performance limits.
@@ -53,7 +54,7 @@ The repository includes scripts used for offline performance tuning and scouting
 ## 📁 Project Structure
 *   [`Main/src/main.py`](Main/src/main.py): Primary robot control logic and UI implementation.
 *   [`Main/drawtrajectories.py`](Main/drawtrajectories.py): Pygame pathing tool.
-*   [`Main/gradient_descent.py`](Main/gradient_descent.py): Autonomous PID tuning script.
+*   [`Main/gradient_descent.py`](Main/gradient_descent.py): From-scratch implementation of Gradient Descent used for PID tuning.
 *   [`Main/robot_speed_calculator.py`](Main/robot_speed_calculator.py): Drivetrain physics simulator.
 *   [`Main/kalmanFilter.py`](Main/kalmanFilter.py): Prototype code for noise-resistant sensor fusion.
 
