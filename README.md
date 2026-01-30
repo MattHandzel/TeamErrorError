@@ -18,17 +18,22 @@ Automated scoring is handled via a kinematics engine that models the field in co
 *   **Computer Vision Aimbot:** In addition to geometric modeling, the robot employs a Vision Sensor-based "aimbot" to track goal signatures and dynamically adjust heading. (`Main/src/main.py` [lines 2451-2495](Main/src/main.py#L2451)).
 *   **Recovery PID:** A specialized PID loop designed for high-inertia flywheels. It features a "recovery mode" that ignores derivative noise during the 0.5s window following a disc launch to minimize RPM drop ([lines 1445-1502](Main/src/main.py#L1445)).
 
-### 3. Automated PID Tuning via Gradient Descent
+### 3. Trajectory Design & Pathing Library
+I developed a custom toolchain for designing and executing autonomous paths.
+*   **Visual Path Designer:** A Pygame-based desktop application (`Main/drawtrajectories.py`) allows for drawing robot trajectories over a digital field map and exporting them as coordinate data.
+*   **Autonomous Recording & Replay:** The system supports a "Recording Mode" where driver movements are sampled and stored as a series of state-targets, allowing complex manual maneuvers to be replayed as autonomous routines ([`main.py` lines 2188-2202](Main/src/main.py#L2188)).
+*   **Intersection Geometry:** Uses line-segment intersection algorithms to determine when the robot has passed specific checkpoints or to avoid virtual obstacles ([`main.py` lines 1362-1372](Main/src/main.py#L1362)).
+
+### 4. Automated PID Tuning via Gradient Descent
 To optimize the flywheel PID constants ($k_P$, $k_I$, $k_D$), I developed a **Gradient Descent** algorithm.
 *   **Iterative Optimization:** Instead of manual tuning, the algorithm iterates over flywheel performance data to identify the optimal constants that minimize RPM error and recovery time.
 *   **Implementation:** The optimization logic is housed in `Main/gradient_descent.py`. This script implements a custom gradient calculation and parameter update loop to automate the tuning process.
 
-### 4. Command-Based Autonomous Engine
-Autonomous routines are defined as a sequence of state-target dictionaries, allowing for readable and modular scripting of complex behaviors.
-*   **Execution Engine:** The `run_autonomous` function processes step-wise instructions with support for timeouts, tolerances, and asynchronous function callbacks ([lines 2088-2182](Main/src/main.py#L2088)).
-*   **Example Routine:** `match_auto_two_squares` demonstrates a full competition path involving odometry-based movement and subsystem coordination ([lines 2616-2715](Main/src/main.py#L2616)).
+### 5. Physical Modeling & Simulation
+Before testing on hardware, I built mathematical models to predict robot performance limits.
+*   **Drivetrain Modeling:** `Main/robot_speed_calculator.py` models motor torque curves, robot weight, and coefficients of friction to calculate theoretical maximum velocities and acceleration profiles.
 
-### 5. Custom UI Framework (V5 Brain)
+### 6. Custom UI Framework (V5 Brain)
 To facilitate on-field debugging and configuration, this project includes a lightweight UI framework built on the V5 touchscreen.
 *   **UI Elements:** Implementation of `Button`, `Switch`, and `Text` classes with callback support ([lines 611-740](Main/src/main.py#L611)).
 *   **Telemetry Dashboard:** A multi-page GUI providing real-time motor temperatures, battery voltage, and odometry data ([lines 3418-3510](Main/src/main.py#L3418)).
@@ -41,15 +46,16 @@ The repository includes scripts used for offline performance tuning and scouting
 
 ## 🛠 Tech Stack
 *   **Platform:** VEX V5 System
-*   **Language:** Python 3.6 (VEX Python Runtime)
-*   **Libraries:** Math, Time, VEX (Robot API), Pandas/Matplotlib (Offline Analysis)
+*   **Language:** Python 3.6 (VEX Python Runtime), Python 3.10+ (Desktop Tools)
+*   **Libraries:** Pygame (Path Design), Pandas/Matplotlib (Offline Analysis), NumPy
 *   **Control Theory:** PID Control, Gradient Descent Optimization, Alpha-Beta Filters, Kinematics
 
 ## 📁 Project Structure
 *   `Main/src/main.py`: Primary robot control logic and UI implementation.
+*   `Main/drawtrajectories.py`: Pygame pathing tool.
 *   `Main/gradient_descent.py`: Autonomous PID tuning script.
+*   `Main/robot_speed_calculator.py`: Drivetrain physics simulator.
 *   `Main/kalmanFilter.py`: Prototype code for noise-resistant sensor fusion.
-*   `Main/gps_math.py`: Pure-math utilities for field geometry.
 
 ---
 *Developed by Team Error Error*
